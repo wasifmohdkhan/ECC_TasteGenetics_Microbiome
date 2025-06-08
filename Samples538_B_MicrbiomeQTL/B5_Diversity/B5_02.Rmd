@@ -1,0 +1,235 @@
+---
+title: "ITS alpha diversity and sdoh"
+output: html_document
+date: "2024-01-01"
+---
+
+## R Markdown
+```{r}
+rm(list = ls())
+```
+
+```{r}
+library(here)
+library(tidyverse)
+library(phyloseq)
+
+```
+
+
+## Import phyloseq for sample data
+```{r}
+Plaque538_ITS_Species_ps = readRDS(here("Samples538_A_Geno_Microbiome/A2_Maaslin/Microbiome538_files",
+                                        "Plaque538_ITS_AllOTU_5perc_ps_17_vars_240306.Rds"))
+Plaque538_ITS_Species_ps
+```
+### Import microbiome data
+#### For microbiome data use Maaslin features for consistency in naming
+```{r}
+# Import the Maaslin features
+Plaque538_ITS_Species_CPM = readr::read_tsv(here("Samples538_A_Geno_Microbiome/A2_Maaslin/Maaslin2_ITS_Species_output/features",
+                                            "filtered_data.tsv"))
+Plaque538_ITS_Species_CPM
+
+# make the rownames the OTU names and matrix
+Plaque538_ITS_Species_CPM_t = Plaque538_ITS_Species_CPM %>% 
+  column_to_rownames("feature") %>% 
+  t() %>% 
+  as.matrix()
+Plaque538_ITS_Species_CPM_t %>% as.data.frame()
+
+```
+
+
+
+
+# Add variants data as variables in sample data to calculate alpha diversity against the
+
+## load recoded vcf file to make a new vcf which as only the above variants
+```{r}
+Samples538_recoded_vcf <- 
+  read.table(here("Samples538_A_Geno_Microbiome/A1_Plink/A1_00_Plink_files",
+                  "Samples538_55gene_Plink.vcf.2.raw"),
+                        header = T)
+Samples538_recoded_vcf[, 1:10]  %>% head()
+
+
+# Create a vector of column names
+columns_to_remove <- c("FID", "PAT", "MAT", "SEX", "PHENOTYPE")
+
+
+Samples538_recoded_vcf_2 = Samples538_recoded_vcf %>%
+  column_to_rownames(var = "IID") %>%
+  dplyr::select(-c(columns_to_remove)) %>%
+  # replace missing values with 0
+  mutate(across(everything(), ~if_else(is.na(.), 0, .)))  %>% 
+  # to make it a dominant vcf table
+  mutate(across(everything(), ~case_when(
+  . == 2 ~ 1,  # Replace 2 with 1
+  TRUE ~ .     # Keep all other values the same
+  ))) %>%
+  # change the variants to factor
+  mutate(across(everything(), as.factor)) %>%
+  ## IID column is required for merging
+  # rownames_to_column(var = "IID") %>% 
+  identity()
+
+Samples538_recoded_vcf_2 %>% head()
+```
+## Load the variant file
+```{r}
+Samples538_Plink_logit_covASPB_w_anno <- 
+  read.table(here("Samples538_A_Geno_Microbiome/A1_Plink/A1_02_Plink_dominant",
+                  "A1_02_Samples538_55gene_logistic_dominant_cov_anno.txt"),
+                                                          header = T)
+Samples538_Plink_logit_covASPB_w_anno %>% head()
+
+Samples538_Plink_logit_covASPB_w_anno_2 = Samples538_Plink_logit_covASPB_w_anno %>% 
+  arrange(P_BH) %>%                 # Sort by P_BH in ascending order
+  slice_head(prop = 0.05) %>%          # Select the top 1% of rows
+  filter(P_BH < 0.05) %>%
+  filter(A1 != '*') %>%
+  # mutate(SNP_A1 = paste(SNP, A1, sep = "_")) %>% 
+  identity()
+Samples538_Plink_logit_covASPB_w_anno_2 
+
+Samples538_Plink_logit_covASPB_w_anno_2_sig = Samples538_Plink_logit_covASPB_w_anno_2 %>%
+  filter(P_BH < 0.05) %>%
+  pull(SNP)
+Samples538_Plink_logit_covASPB_w_anno_2_sig
+```
+
+```{r}
+Samples538_recoded_vcf_sig = Samples538_recoded_vcf_2 %>%
+  dplyr::select(Samples538_Plink_logit_covASPB_w_anno_2$SNP) %>% 
+  rownames_to_column(var = "IID") %>% 
+  identity()
+Samples538_recoded_vcf_sig
+
+## variant names
+Samples538_recoded_vcf_sig_names = Samples538_recoded_vcf_sig %>% 
+  dplyr::select(-IID) %>%
+  names()
+Samples538_recoded_vcf_sig_names 
+```
+```{r}
+Samples538_recoded_vcf_sig_2 = Samples538_recoded_vcf_sig %>% 
+  column_to_rownames(var = "IID") %>% 
+  mutate(across(everything(), as.numeric))%>%
+  identity()
+Samples538_recoded_vcf_sig_2
+```
+
+## Make a new phyloseq with new OTU table
+```{r}
+# Make a new phyloseq object with the new OTU table
+Plaque538_ITS_Species_ps_CPM = merge_phyloseq(Plaque538_ITS_Species_ps,
+                                              otu_table(Plaque538_ITS_Species_CPM_t,
+                                                        taxa_are_rows = TRUE)
+                                              )
+sample_data(Plaque538_ITS_Species_ps_CPM) = Samples538_recoded_vcf_sig_2
+Plaque538_ITS_Species_ps_CPM 
+Plaque538_ITS_Species_ps_CPM %>% sample_data()
+```
+
+```{r}
+```
+
+
+```{r}
+ps = Plaque538_ITS_Species_ps_CPM
+
+# remove the variables not required
+variables_to_remove <- c("Child_overall_health", "Material_depr_score")
+ps@sam_data <- ps@sam_data[, !(colnames(ps@sam_data) %in% variables_to_remove)]
+
+```
+
+
+```{r}
+
+
+library(phyloseq)
+library(ggplot2)
+
+# Assuming 'ps' is your phyloseq object
+shannon_data <- estimate_richness(ps, measures = "Shannon")
+
+# Extract sample data
+sample_data <- data.frame(sample_data(ps))
+
+# Merge Shannon diversity with sample data
+merged_data <- cbind(sample_data, Shannon = shannon_data$Shannon)
+
+# Perform Spearman correlation and extract coefficients directly
+cor_coefficients <- apply(merged_data[, -which(names(merged_data) == "Shannon")], 2, function(x) {
+    cor.test(x, merged_data$Shannon, method = "spearman")$estimate
+})
+
+# Extract p-values
+p_values <- apply(merged_data[, -which(names(merged_data) == "Shannon")], 2, function(x) {
+    cor.test(x, merged_data$Shannon, method = "spearman")$p.value
+})
+
+# Create a data frame for plotting
+plot_data <- data.frame(Variable = names(cor_coefficients),
+                        Correlation = cor_coefficients, 
+                        Significant = ifelse(p_values < 0.05, "Significant", "Not Significant"))
+
+plot_data = plot_data %>% 
+  mutate(adj_p_value = p.adjust(p_values, "BH"))
+```
+
+
+```{r}
+
+# Create a bar plot
+Plaque538_ITS_Species_Shannon_Diversity = 
+ggplot(plot_data, aes(x = Correlation, y = Variable, fill = adj_p_value < 0.05)) +
+  geom_bar(stat = "identity", alpha = 0.6, width = 0.8) +
+  scale_fill_manual(values = c("FALSE" = "grey", "TRUE" = "firebrick"),
+                    labels = c(expression("Non-significant (" * italic("p") * " ≥ 0.05)"), 
+                               expression("Significant (" * italic("p") * " < 0.05)")), 
+                    name = "Statistical Significance") + 
+  labs(title = "Fungi",
+       x = "Spearman Correlation Coefficient (ρ)",
+       y = "Host variables",
+       fill = "Significance") +
+  scale_x_continuous(limits = c(-0.15, 0.15),
+                     breaks = c(-0.10, 0, 0.10)
+                     ) + # Set the x-axis limits
+  scale_y_discrete(labels = function(labels) str_replace(labels, "chr\\d+[_]+\\d+_", "")) +
+  theme_minimal(base_size = 12, base_family = "Arial") +
+    theme(
+      text = element_text(colour = "black"),
+    axis.text = element_text(size = 8, color = "black"),
+    axis.title = element_text(size = 9, color = "black"),
+    legend.text = element_text(size = 6),      # Reduce legend text size
+    legend.title = element_text(size = 7),   # Reduce legend title size
+    legend.key.size = unit(0.4, "cm"),        # Reduce size of legend keys
+    legend.position = "bottom",
+    plot.title = element_text(color = "black", face = "bold", hjust = 0.5, size = 9),
+    plot.subtitle = element_text(color = "black"),
+    plot.caption = element_text(color = "black"),
+    axis.ticks = element_blank(), # Remove axis ticks
+    # Make the gridlines faint
+    panel.grid.major = element_blank(), # Remove major grid lines
+    panel.grid.minor = element_blank(), # Remove minor grid lines
+    panel.background = element_blank(), # Remove panel background
+    axis.line.x = element_line(color="black"), # Keep x-axis line
+    axis.line.y = element_blank(), # Remove y-axis line
+    axis.text.y = element_text(colour = "black"),
+    axis.ticks.y = element_blank(), # Hide y-axis ticks
+    axis.ticks.x = element_blank(), # Hide x-axis ticks if desired
+    axis.title.y = element_blank(), # Hide the y-axis title
+  )
+
+# plot
+Plaque538_ITS_Species_Shannon_Diversity
+
+# # save
+saveRDS(Plaque538_ITS_Species_Shannon_Diversity,
+        here("/media/Second_stor/wasif/WK_Rprojects/RP_240910_Taste_Genes_Analysis_2/Samples538_B_MicrbiomeQTL/B5_Diversity",
+             "B5_02_Plaque538_ITS_Species_Shannon_Diversity.rds")
+        )
+```

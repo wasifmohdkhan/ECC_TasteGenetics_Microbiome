@@ -1,0 +1,488 @@
+---
+title: "C2_02_sig_variant_all_OTU mediation on Samples538  with clr"
+output: html_document
+date: "2024-09-24"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# to run it in the background keep it commented out and run it in the terminal
+```{r}
+# job::job({rmarkdown::render("/media/Second_stor/wasif/WK_Rprojects/RP_240910_Taste_Genes_Analysis_2/Samples538_C_Mediation/C2_MediationR/C2_02.Rmd")}, title = "Running Rmd C2_02 in background")
+```
+
+
+## R Markdown
+```{r}
+rm(list = ls())
+```
+
+```{r}
+file_name_ext="C2_02_sig_variant_all_OTU"
+```
+
+# Load libraries
+```{r}
+library(tidyverse)
+library(here)
+library(LDM)
+library(ComplexHeatmap)
+library(circlize)
+library(grid)
+```
+
+
+## Need three tables
+1. A microbiome table
+
+16S microbiome
+#### For microbiome data use Maaslin features for consistency in naming
+```{r}
+# Import the Maaslin features
+Plaque538_16S_Species_CLR = readr::read_tsv(here("Samples538_A_Geno_Microbiome/A2_Maaslin/Maaslin2_16S_Species_output/features",
+                                            "filtered_data_norm.tsv"))
+Plaque538_16S_Species_CLR
+```
+ITS microbiome
+```{r}
+# Import the Maaslin features
+Plaque538_ITS_Species_CLR = readr::read_tsv(here("Samples538_A_Geno_Microbiome/A2_Maaslin/Maaslin2_ITS_Species_output/features",
+                                            "filtered_data_norm.tsv"))
+Plaque538_ITS_Species_CLR
+
+```
+
+
+```{r}
+
+Plaque538_16S_ITS_Species_CLR_OTU = full_join(Plaque538_16S_Species_CLR, Plaque538_ITS_Species_CLR, by = "feature") %>%
+  rename(IID = feature)
+Plaque538_16S_ITS_Species_CLR_OTU %>% head()
+
+# Plaque538_16S_ITS_Species_CLR_OTU_2 = Plaque538_16S_ITS_Species_CLR_OTU %>%
+#   # column_to_rownames(var = "IID") %>%
+#   # dplyr::select(-FID) %>% 
+#   identity()
+# Plaque538_16S_ITS_Species_CLR_OTU_2 
+
+Plaque538_16S_ITS_Species_CLR_OTU_names = Plaque538_16S_ITS_Species_CLR_OTU %>% 
+  dplyr::select(-IID) %>%
+  colnames()
+Plaque538_16S_ITS_Species_CLR_OTU_names
+```
+
+
+
+## microbiome file with only Maaslin2 significant species
+
+```{r}
+Maaslin2_16S_ITS_features =
+  readRDS(here("Samples538_A_Geno_Microbiome/A2_Maaslin",
+               "A2_04_Species_coef_qval_16S_ITS.rds"))
+Maaslin2_16S_ITS_features
+
+# Maaslin2_16S_ITS_features_2 = Maaslin2_16S_ITS_features %>%
+#   # column_to_rownames(var = "IID") %>%
+#   dplyr::select(-FID) %>%
+#   # as.matrix() %>%
+#   # filter(IID %in% rownames(Samples538_covariates_vcf_raw)) %>%
+#   column_to_rownames(var = "IID") %>%
+#   identity()
+# Maaslin2_16S_ITS_features_2 %>% head()
+
+Maaslin2_16S_ITS_features_names = Maaslin2_16S_ITS_features %>%
+  filter(q_values < 0.01) %>%
+  pull(OTUs)
+Maaslin2_16S_ITS_features_names
+
+```
+
+
+
+
+```{r}
+# Plaque538_16S_ITS_Species_CLR_OTU_sig = Plaque538_16S_ITS_Species_CLR_OTU_2 %>%
+#   # dplyr::select(one_of(Maaslin2_16S_ITS_features_names)) %>% 
+#   identity()
+# Plaque538_16S_ITS_Species_CLR_OTU_sig
+# 
+# ## feature names
+# Plaque538_16S_ITS_Species_CLR_OTU_sig_names = Plaque538_16S_ITS_Species_CLR_OTU_sig %>% 
+#   dplyr::select(-IID) %>%
+#   names()
+# Plaque538_16S_ITS_Species_CLR_OTU_sig_names 
+
+```
+
+
+
+
+## load recoded vcf file to make a new vcf which as only the above variants
+```{r}
+Samples538_recoded_vcf <- 
+  read.table(here("Samples538_A_Geno_Microbiome/A1_Plink/A1_00_Plink_files",
+                  "Samples538_55gene_Plink.vcf.2.raw"),
+                        header = T)
+Samples538_recoded_vcf[, 1:10]  %>% head()
+
+
+# Create a vector of column names
+columns_to_remove <- c("FID", "PAT", "MAT", "SEX", "PHENOTYPE")
+
+
+Samples538_recoded_vcf_2 = Samples538_recoded_vcf %>%
+  column_to_rownames(var = "IID") %>%
+  dplyr::select(-c(columns_to_remove)) %>%
+  # replace missing values with 0
+  mutate(across(everything(), ~if_else(is.na(.), 0, .)))  %>% 
+  # to make it a dominant vcf table
+  mutate(across(everything(), ~case_when(
+  . == 2 ~ 1,  # Replace 2 with 1
+  TRUE ~ .     # Keep all other values the same
+  ))) %>%
+  # change the variants to factor
+  mutate(across(everything(), as.factor)) %>%
+  ## IID column is required for merging
+  # rownames_to_column(var = "IID") %>% 
+  identity()
+
+Samples538_recoded_vcf_2 %>% head()
+```
+## Load the variant file
+```{r}
+Samples538_Plink_logit_covASPB_w_anno <- 
+  read.table(here("Samples538_A_Geno_Microbiome/A1_Plink/A1_02_Plink_dominant",
+                  "A1_02_Samples538_55gene_logistic_dominant_cov_anno.txt"),
+                                                          header = T)
+Samples538_Plink_logit_covASPB_w_anno %>% head()
+
+Samples538_Plink_logit_covASPB_w_anno_2 = Samples538_Plink_logit_covASPB_w_anno %>% 
+  arrange(P_BH) %>%                 # Sort by P_BH in ascending order
+  slice_head(prop = 0.05) %>%          # Select the top 1% of rows
+  filter(P_BH < 0.05) %>%
+  filter(A1 != '*') %>%
+  # mutate(SNP_A1 = paste(SNP, A1, sep = "_")) %>% 
+  identity()
+Samples538_Plink_logit_covASPB_w_anno_2 
+
+Samples538_Plink_logit_covASPB_w_anno_2_sig = Samples538_Plink_logit_covASPB_w_anno_2 %>%
+  filter(P_BH < 0.05) %>%
+  pull(SNP)
+Samples538_Plink_logit_covASPB_w_anno_2_sig
+```
+
+```{r}
+Samples538_recoded_vcf_sig = Samples538_recoded_vcf_2 %>%
+  dplyr::select(Samples538_Plink_logit_covASPB_w_anno_2$SNP) %>% 
+  rownames_to_column(var = "IID")
+Samples538_recoded_vcf_sig
+
+## variant names
+Samples538_recoded_vcf_sig_names = Samples538_recoded_vcf_sig %>% 
+  dplyr::select(-IID) %>%
+  names()
+Samples538_recoded_vcf_sig_names 
+```
+
+
+
+##covariate
+
+## Load the metadata file
+```{r}
+Samples538_covariates <- 
+  read.table(here("Samples538_A_Geno_Microbiome/A1_Plink/A1_00_Plink_files",
+                           "Samples538_Combined_covariates_PCA.txt"),
+                      header = T)
+Samples538_covariates %>% head()
+
+
+```
+
+
+```{r}
+Samples538_covariates %>% group_by(Sex) %>% summarise(n = n())
+Samples538_covariates %>% group_by(ECC_status) %>% summarise(n = n())
+```
+
+Required by plink Binary ('0' = control, '1' = case)
+Required by plink Sex code ('1' = male, '2' = female, '0' = unknown)
+FID (Family ID) and IID (Individual ID) for it to correctly identify individuals
+mbQTL can not take non numerical covariates
+
+```{r}
+
+covariates <- c("Sex", "Age", "RuralUrban", "SEFI_score", "PC1", "PC2", "PC3", "PC4", "PC5")
+
+Samples538_covariates_2 = Samples538_covariates %>% 
+  dplyr::select(IID, ECC_status, Sex, Age, RuralUrban, SEFI_score, PC1, PC2, PC3, PC4, PC5) %>%
+  # mutate(FID = IID) %>%
+  mutate(Sex = case_when( # AS Original in data 1, Female | 2, Male 
+    Sex == 0 ~ "Female",
+    Sex == 1 ~ "Male")) %>% 
+  mutate(Sex = case_when( # AS 	required by plink Sex code ('1' = male, '2' = female, '0' = unknown)
+    Sex == "Female" ~ 2,
+    Sex == "Male" ~ 1,
+    TRUE ~ 0 )) %>% 
+  dplyr::select(IID, ECC_status, covariates) %>%
+  mutate(across(c(ECC_status, Sex, RuralUrban), as.factor)) %>% 
+  # column_to_rownames(var = "IID") %>% 
+  identity()
+
+Samples538_covariates_2 
+
+
+# Samples538_covariates_2_t = Samples538_covariates_2 %>%
+#   as.matrix() %>% 
+#   t() %>% 
+#   as.data.frame()
+# Samples538_covariates_2_t 
+```
+
+
+
+
+
+
+
+
+
+
+# combine all the datasets
+
+
+```{r}
+# Combine datasets by joining on "IID" and applying transformations in a streamlined manner
+Samples538_covariates_vcf_clr_microbiome <- Samples538_covariates_2 %>%
+  inner_join(Samples538_recoded_vcf_sig, by = "IID") %>%
+  inner_join(Plaque538_16S_ITS_Species_CLR_OTU, by = "IID") %>%
+  # Remove rows with NA values
+  na.omit() %>%
+  identity()
+
+Samples538_covariates_vcf_clr_microbiome
+```
+
+
+
+
+```{r}
+library(mediation)
+
+
+mediator_model <- glm(B_s_Fusobacterium_periodonticum ~ chr07_143443837_TAS2R60_rs35195910 +Age+Sex+PC1+PC2+PC3+PC4+PC5+RuralUrban+SEFI_score,
+                     data =Samples538_covariates_vcf_clr_microbiome,
+                     family = gaussian)
+
+outcome_model <- glm(ECC_status ~ chr07_143443837_TAS2R60_rs35195910 + B_s_Fusobacterium_periodonticum +Age+Sex+PC1+PC2+PC3+PC4+PC5+RuralUrban+SEFI_score,
+                    data = Samples538_covariates_vcf_clr_microbiome,
+                    family = binomial(link = "logit"))
+
+results <- mediate(mediator_model,
+                   outcome_model,
+                   covariates = c("Age", "Sex", "PC1", "PC2", "PC3", "PC4", "PC5", "RuralUrban", "SEFI_score"),
+                   treat= 'chr07_143443837_TAS2R60_rs35195910',
+                   mediator= 'B_s_Fusobacterium_periodonticum' ,
+                   boot=TRUE,
+                   sims=5000)
+summary(results, digits = 20) 
+    # Extract ACME (average) estimate and p-value
+    results$d.avg
+    results$d.avg.p
+
+    # Extract ADE (average) estimate and p-value
+    results$z.avg
+    results$z.avg.p
+
+    # Extract Total Effect (TE) estimate and p-value
+    results$tau.coef
+    results$tau.p
+```
+
+```{r}
+results$d.avg.p
+
+```
+
+```{r}
+
+# Create an empty dataframe to store the results
+results_df <- data.frame(
+  variant = character(),
+  OTU = character(),
+  acme_estimate = numeric(),
+  acme_p_value = numeric(),
+  ade_estimate = numeric(),
+  ade_p_value = numeric(),
+  total_effect_estimate = numeric(),
+  total_effect_p_value = numeric(),
+  stringsAsFactors = FALSE
+)
+
+# Iterate over each combination of variant and OTU
+for (OTU in Plaque538_16S_ITS_Species_CLR_OTU_names) {
+  for (variant in Samples538_recoded_vcf_sig_names) {
+
+    # Fit the mediator model
+    mediator_model <- glm(as.formula(paste0(OTU, " ~ ", variant,
+                                            " + Age + Sex + PC1 + PC2 + PC3 + PC4 + PC5 + RuralUrban + SEFI_score")),
+                          data = Samples538_covariates_vcf_clr_microbiome,
+                          family = gaussian)
+
+    # Fit the outcome model
+    outcome_model <- glm(as.formula(paste0("ECC_status ~ ", variant, " + ", OTU,
+                                           " + Age + Sex + PC1 + PC2 + PC3 + PC4 + PC5 + RuralUrban + SEFI_score")),
+                         data = Samples538_covariates_vcf_clr_microbiome,
+                         family = binomial(link = "logit"))
+
+    # Perform mediation analysis
+    med_results <- mediate(mediator_model,
+                           outcome_model,
+                           treat = variant,
+                           mediator = OTU,
+                           sims = 5000)
+
+    results_df <- results_df %>%
+      add_row(
+              variant = variant,
+              OTU = OTU,
+              acme_estimate = med_results$d.avg,
+              acme_p_value = med_results$d.avg.p,
+              ade_estimate = med_results$z.avg,
+              ade_p_value = med_results$z.avg.p,
+              total_effect_estimate = med_results$tau.coef,
+              total_effect_p_value = med_results$tau.p
+              )
+  }
+}
+
+```
+
+```{r}
+# Display the results dataframe
+print(results_df)
+```
+
+# Save the results to a file
+```{r}
+
+write.table(results_df,
+          file = here("Samples538_C_Mediation/C2_MediationR",
+                      paste0(file_name_ext, "_mediationR.csv")),
+          row.names = FALSE, sep = "\t", quote = FALSE)
+
+```
+
+
+```{r}
+rm(results_df)
+```
+
+
+# Load the results
+```{r}
+results_df <- read.table(here("Samples538_C_Mediation/C2_MediationR",
+                      paste0(file_name_ext, "_mediationR.csv")),
+                         header = TRUE, sep = ",")
+results_df
+```
+
+
+
+```{r}
+
+results_df_2 = results_df %>% 
+  # replace acme_p_value == 0 to 10^-16 accoring to the minimumn threshold
+  mutate(acme_p_value = ifelse(acme_p_value == 0, 10^-16, acme_p_value)) %>%
+  # Group by 'variant' and adjust p-values within each group
+  group_by(variant) %>%
+  mutate(adjusted_p_value = p.adjust(acme_p_value, method = "fdr")) %>%
+  ungroup()  # Ungroup after the operation
+
+# Display the updated results
+print(results_df_2)
+  
+```
+
+
+```{r}
+results_df_3 = results_df %>% 
+  mutate(acme_p_value = ifelse(acme_p_value == 0, 10^-16, acme_p_value)) %>%
+  # Filter out rows with adjusted p-value > 0.05
+  filter(acme_p_value < 0.05) %>%
+  # Arrange the rows by adjusted p-value
+  arrange(acme_p_value) %>% 
+  # Add a column for the linear model estimate and p-value
+  complete(variant, OTU,
+           fill = list(acme_estimate = 0,
+                       acme_p_value = NA)) %>%
+  # Add a column for significance level 
+  mutate(p_significance = case_when(
+    acme_p_value < 0.00001 ~ "*****",
+    acme_p_value < 0.0001 ~ "****",
+    acme_p_value < 0.001 ~ "***",
+    acme_p_value < 0.01  ~ "**",
+    acme_p_value < 0.05  ~ "*",
+    TRUE            ~ ""
+  ) ,
+  fdr_significance = case_when(
+    acme_p_value < 0.000001 ~ "†",
+    TRUE             ~ ""
+  )) %>%
+  mutate(significance = paste0(p_significance, fdr_significance)) %>% 
+  mutate(
+    y_face = ifelse(OTU %in% Maaslin2_16S_ITS_features_names, "bold", "plain")
+  )
+results_df_3
+```
+
+
+```{r}
+# Convert the adjusted p-values to -log10 scale for better visualization
+results_df_3 <- results_df_3 %>%
+  mutate(log_p_value = -log10(acme_p_value)) %>% 
+  complete(variant, OTU, fill = list(log_p_value = 0))  # Add missing combinations
+
+# Create the heatmap
+heatmap_plot <- ggplot(results_df_3, aes(x = variant, y = OTU, fill = acme_estimate)) +
+  geom_tile(color = "black", size = 0.1) +
+  geom_text(aes(label = significance), vjust = 0.5, color = "black", size = 3) +
+  scale_fill_gradient2(low = "cadetblue4", mid = "white", high = "chocolate4", 
+                       midpoint = 0, name = "Estimate") +
+  scale_y_discrete(labels = function(labels) str_trunc(labels, width = 35, side = "right")) +
+   scale_x_discrete(labels = function(labels) str_replace(labels, "chr\\d+[_]+\\d+_", "")) +
+  theme_minimal(base_size = 12) +
+  labs(x = "Genetic variants", y = "Microbial species") +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 0.9, vjust = 1, size = 6, color = "black" ),
+    axis.text.y = element_text(size = 6, color = "black"),
+    axis.title = element_text(size = 7, color = "black", face = "bold"),
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    panel.grid = element_blank(),
+    legend.position = "top",
+    legend.key.size = unit(0.4, "cm"),
+    legend.text = element_text(size = 4),
+    legend.title = element_text(size = 6)
+  ) #+
+
+# Display the heatmap
+print(heatmap_plot)
+
+ggsave(here("Samples538_C_Mediation/C2_MediationR",
+         paste0(file_name_ext, "_Heatmap_Mediation.jpg")),
+       plot = heatmap_plot,
+       width = 4,
+       height = 7)
+saveRDS(heatmap_plot, here("Samples538_C_Mediation/C2_MediationR",
+         paste0(file_name_ext, "_Heatmap_Mediation.rds")))
+
+
+```
+
+
+
+
+

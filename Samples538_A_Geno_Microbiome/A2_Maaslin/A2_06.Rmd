@@ -1,0 +1,116 @@
+---
+title: "Combine Genus and Species level Maaslin2 plot"
+output: html_document
+date: "2025-02-25"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+```{r}
+rm(list = ls())
+```
+
+```{r}
+library(here)
+library(tidyverse)
+library(microbiome)
+library(microbiomeMarker)
+library(phyloseq)
+library(pheatmap)
+library(RColorBrewer)
+# Load the package
+library(ComplexHeatmap)
+library(circlize)
+library(Maaslin2)
+library(ggbreak)
+library(patchwork)
+```
+
+
+## Read in the Data Files
+
+```{r read-data}
+library(here)      # For constructing file paths
+library(dplyr)     # For data manipulation
+library(ggplot2)   # For plotting
+
+# Read in the species-level and genus-level data files
+Species_coef_qval_16S_ITS <- readRDS(here("Samples538_A_Geno_Microbiome/A2_Maaslin",
+                                           "A2_04_Species_coef_qval_16S_ITS.rds"))
+Genus_coef_qval_16S_ITS <- readRDS(here("Samples538_A_Geno_Microbiome/A2_Maaslin",
+                                        "A2_05_Genus_coef_qval_16S_ITS.rds"))
+
+```
+
+## Combine the Species and Genus Datasets
+
+```{r}
+# Combine the two datasets into one
+Combined_data <- dplyr::bind_rows(Species_coef_qval_16S_ITS, Genus_coef_qval_16S_ITS)
+
+```
+
+## Data Preparation Combined Level
+```{r}
+# Filter the combined data for significant q-values and calculate -log10(q_values)
+Combined_data <- Combined_data %>% 
+  filter(q_values < 0.01) %>%
+  mutate(log_q_values = -log10(q_values),
+         Sign = ifelse(Coefficients > 0, "ECC", "CF"))
+
+# Abbreviate the OTU names for both species and genus using a consistent minlength of 48
+Combined_data$Shortened_OTUs <- abbreviate(Combined_data$OTUs, minlength = 48, use.classes = FALSE)
+
+# Order the Shortened_OTUs factor based on the Coefficients
+Combined_data$Shortened_OTUs <- factor(Combined_data$Shortened_OTUs, 
+                                       levels = Combined_data$Shortened_OTUs[order(Combined_data$Coefficients)])
+
+# Add a Level column to differentiate between Species and Genus data.
+# Here we assume that the Species dataset had more rows than Genus or vice versa;
+# adjust accordingly if you have a specific variable to indicate the level.
+# For demonstration, we create a Level variable based on whether OTU names exist in the original datasets.
+Combined_data$Level <- ifelse(Combined_data$OTUs %in% Species_coef_qval_16S_ITS$OTUs, "Species", "Genus")
+
+```
+
+## Create the Combined Plot
+```{r}
+Combined_plot <- ggplot(Combined_data, aes(x = Shortened_OTUs, y = Coefficients, fill = Sign)) +
+  geom_bar(stat = "identity", color = "black", size = 0.1, width = 0.75, alpha = 0.8) +
+  geom_text(aes(y = 0, label = Shortened_OTUs),
+            hjust = ifelse(Combined_data$Coefficients < 0, 0, 1),
+            nudge_y = ifelse(Combined_data$Coefficients < 0, 0.1, -0.1),
+            color = "black", size = 2.5) +
+  scale_y_continuous(limits = c(-2, 2.5), breaks = seq(-2, 2, 1)) +
+  scale_fill_manual(values = c("ECC" = "darkred", "CF" = "darkblue")) +
+  # facet_wrap(~ Level, scales = "free_y") +   # Facet by taxonomic level
+  labs(x = "Microbial Taxa", y = "Coefficient estimate (MaAsLin2)") +
+  theme_void() +
+  theme(axis.title.x = element_text(size = 11),
+        axis.text.x  = element_text(vjust = 0.7, size = 9),
+        # legend.position = "top",
+        legend.title = element_blank(),
+        panel.grid.major.x = element_line(color = "grey", linewidth = 0.2, linetype = "dotted"),
+        panel.grid.minor.x = element_line(color = "grey", linewidth = 0.1, linetype = "dotted"),
+        strip.text = element_text(size = 12, face = "bold")) +
+  coord_flip()
+
+# Display the plot
+Combined_plot
+
+
+ggsave(here("Samples538_A_Geno_Microbiome/A2_Maaslin",
+            "A2_06_Combined_Maaslin2_barplot.jpg"),
+       plot = Combined_plot, width = 5.8, height = 8, dpi = 300)
+
+# saveRDS(Combined_plot,
+#         file = here("Samples538_A_Geno_Microbiome/A2_Maaslin",
+#                     "Combined_Maaslin2_barplot.rds"))
+
+
+```
+ 
+ 

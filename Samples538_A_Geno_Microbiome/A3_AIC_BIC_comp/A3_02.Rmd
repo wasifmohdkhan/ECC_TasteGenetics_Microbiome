@@ -1,0 +1,272 @@
+---
+title: "Plink with Age,Sex, AIC BIC comparison for glm for top 5 SNP"
+output: html_document
+date: "2024-08-20"
+
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+```{r}
+rm(list = ls())
+
+```
+
+# Load libraries
+```{r}
+library(tidyverse)
+library(here)
+library(snpStats)
+library(vcfR)
+library(mbQTL)
+library(RColorBrewer)
+```
+
+
+## Load the variant file
+```{r}
+Samples538_Plink_logit_covASPB_w_anno = read.table(here("Samples538_A_Geno_Microbiome/A1_Plink/A1_01_Plink_additive",
+                                                               "A1_01_Samples538_55gene_logistic_additive_cov_anno.txt"),
+                                                          header = T)
+Samples538_Plink_logit_covASPB_w_anno %>% head()
+```
+
+
+```{r}
+Samples538_Plink_logit_covASPB_w_anno_2 = Samples538_Plink_logit_covASPB_w_anno %>% 
+  # filter(P_Bonferroni < 0.05) %>%
+  filter(A1 != '*') %>%
+  # mutate(SNP_A1 = paste(SNP, A1, sep = "_")) %>% 
+  # select top 5 SNP to filter from all the data
+  slice(1:5)
+Samples538_Plink_logit_covASPB_w_anno_2 %>% head()
+```
+
+
+
+
+
+
+
+## load recoded vcf file to make a new vcf which as only the above variants
+```{r}
+Samples538_recoded_vcf = read.table(here("Samples538_A_Geno_Microbiome/A1_Plink/A1_00_Plink_files",
+                                         "Samples538_55gene_Plink.vcf.2.raw"),
+                        header = T)
+Samples538_recoded_vcf[, 1:10]  %>% head()
+
+Samples538_recoded_vcf_2 = Samples538_recoded_vcf %>%
+  column_to_rownames(var = "IID") %>%
+  # select only the variants in the assoc file
+  dplyr::select(Samples538_Plink_logit_covASPB_w_anno_2$SNP) %>% 
+  # replace missing values with 0
+  mutate(across(everything(), ~if_else(is.na(.), 0, .))) %>% 
+  rownames_to_column(var = "IID")
+
+Samples538_recoded_vcf_2 %>% head()
+```
+
+
+## Load the metadata file
+```{r}
+Samples538_covariates = read.table(here("Samples538_A_Geno_Microbiome/A1_Plink/A1_00_Plink_files",
+                           "Samples538_Combined_covariates_PCA.txt"),
+                      header = T)
+Samples538_covariates %>% head()
+
+Samples538_covariates_2 = Samples538_covariates %>%
+  mutate(Batches = case_when(
+    Batch_2 == 0 & Batch_3 == 0 ~ 1,  # If Batch_2 = 0 and Batch_3 = 0, assign Batch = 1
+    Batch_2 == 1 & Batch_3 == 0 ~ 2,  # If Batch_2 = 1 and Batch_3 = 0, assign Batch = 2
+    Batch_2 == 0 & Batch_3 == 1 ~ 3   # If Batch_2 = 0 and Batch_3 = 1, assign Batch = 3
+  )) %>% 
+  mutate(Batches = as.factor(Batches)) %>%
+  # mutate(ECC_status = case_when(
+  #   ECC_status == 0 ~ "CF",
+  #   ECC_status == 1 ~ "ECC"
+  # )) %>% 
+  mutate(ECC_status = as.factor(ECC_status)) %>%
+  # mutate(Sex =  case_when(
+  #   Sex == 1 ~ "One",
+  #   Sex == 2 ~ "Two"
+  # )) %>% 
+  mutate(Sex = as.factor(Sex)) %>%
+  mutate(RuralUrban = as.factor(RuralUrban))
+Samples538_covariates_2
+```
+
+
+# merge the metadata with the genotype data
+```{r}
+Samples538_metadata_recoded_vcf = Samples538_covariates_2 %>%
+  left_join(Samples538_recoded_vcf_2, by = c("IID" = "IID")) 
+Samples538_metadata_recoded_vcf
+```   
+
+```{r}
+# Define the SNPs you want to iterate over
+snp_names <- Samples538_recoded_vcf_2 %>% 
+  select(-IID) %>%
+  colnames()
+
+# Covariates combinations
+covariates <- list(
+  "Age_Sex"                     = c("Age", "Sex"),
+  "Age_Sex_Batches"             = c("Age", "Sex", "Batches"),
+  "Age_Sex_PC1-5"               = c("Age", "Sex", "PC1", "PC2", "PC3", "PC4", "PC5"),
+  "Age_Sex_PC1-5_Batches"       = c("Age", "Sex", "PC1", "PC2", "PC3", "PC4", "PC5", "Batches"),
+  # "Age_Sex_PC1-5_Batches_SEFI"  = c("Age", "Sex", "PC1", "PC2", "PC3", "PC4", "PC5", "Batches", "SEFI_score"),
+  # "Age_Sex_PC1-5_Batches_Urban" = c("Age", "Sex", "PC1", "PC2", "PC3", "PC4", "PC5", "Batches", "RuralUrban"),
+  # "Age_Sex_PC1-5_Batches_SEFI_Urban" = c("Age", "Sex", "PC1", "PC2", "PC3", "PC4", "PC5", "Batches", "SEFI_score", "RuralUrban"),
+  "Age_Sex_PC1-5_RuralUrban"         = c("Age", "Sex", "PC1", "PC2", "PC3", "PC4", "PC5", "RuralUrban"),
+  "Age_Sex_PC1-5_SEFI"          = c("Age", "Sex", "PC1", "PC2", "PC3", "PC4", "PC5", "SEFI_score"),
+  "Age_Sex_PC1-5_RuralUrban_SEFI"    = c("Age", "Sex", "PC1", "PC2", "PC3", "PC4", "PC5", "SEFI_score", "RuralUrban")
+  # "Age_Sex_SEFI_Urban"          = c("Age", "Sex", "SEFI_score", "RuralUrban"),
+  # "Age_Sex_PC1-2_SEFI_Urban"    = c("Age", "Sex", "PC1", "PC2", "SEFI_score", "RuralUrban")
+)
+
+# # Create an empty list to store results
+# results <- list()
+# 
+# # Nested loop to run GLM for each SNP and combination of covariates
+# for (snp in snp_names) {
+#   for (covariate_name in names(covariates)) {
+#     covariate_list <- covariates[[covariate_name]]
+#     
+#     # Construct the formula dynamically
+#     formula <- paste("ECC_status ~", snp, "+", paste(covariate_list, collapse = " + "))
+#     
+#     # Use the formula in glm
+#     model <- glm(as.formula(formula), data = Samples538_metadata_recoded_vcf, family = binomial())
+#     
+#     # Store AIC and BIC values
+#     results[[paste(snp, covariate_name, sep = "_")]] <- list(
+#       AIC = AIC(model),
+#       BIC = BIC(model)
+#     )
+#   }
+# }
+# 
+# # Print the results
+# print(results)
+```
+
+
+```{r}
+# Create an empty data frame to store results
+results_df <- data.frame(SNP = character(),
+                         Covariates = character(),
+                         AIC = numeric(),
+                         BIC = numeric(),
+                         stringsAsFactors = FALSE)
+
+# Nested loop to run GLM for each SNP and combination of covariates
+for (snp in snp_names) {
+  for (covariate_name in names(covariates)) {
+    covariate_list <- covariates[[covariate_name]]
+    
+    # Construct the formula dynamically
+    formula <- paste("ECC_status ~", snp, "+", paste(covariate_list, collapse = " + "))
+    
+    # Try fitting the model and catch errors if the model fails
+    tryCatch({
+      model <- glm(as.formula(formula), data = Samples538_metadata_recoded_vcf, family = binomial())
+      
+      # Append results to the data frame
+      results_df <- rbind(results_df, data.frame(
+        SNP = snp,
+        Covariates = covariate_name,
+        AIC = AIC(model),
+        BIC = BIC(model)
+      ))
+    }, error = function(e) {
+      # Append NA values in case of error
+      results_df <- rbind(results_df, data.frame(
+        SNP = snp,
+        Covariates = covariate_name,
+        AIC = NA,
+        BIC = NA
+      ))
+    })
+  }
+}
+
+# Print the results
+print(results_df)
+```
+
+
+```{r}
+
+# Convert to long format
+results_long <- results_df %>%
+  mutate(Covariates = factor(Covariates, levels = c(
+                          "Age_Sex",
+                          "Age_Sex_Batches",
+                          "Age_Sex_PC1-5",
+                          "Age_Sex_PC1-5_Batches",
+                          "Age_Sex_PC1-5_RuralUrban",
+                          "Age_Sex_PC1-5_SEFI",
+                          "Age_Sex_PC1-5_RuralUrban_SEFI"
+                          # "(DOM)_Age_Sex_PC1-5_RuralUrban_SEFI"
+                          )
+                          )) %>%  # Convert SNP to factor with the same order as in the original data
+  pivot_longer(cols = c(AIC, BIC),  # Columns to pivot
+               names_to = "Metric", # New column for the metric type
+               values_to = "Value") # New column for the values
+results_long = results_long %>% 
+  arrange(SNP) %>%
+  mutate(SNP = gsub("chr\\d+_\\d+_", "", SNP)) %>% 
+  mutate(SNP = factor(SNP, levels = unique(SNP)))
+results_long
+```
+
+```{r}
+ggplot(results_long, aes(x = Covariates, y = Value, fill = Metric)) +
+  geom_bar(stat = "identity", position = position_dodge(), color = "black", alpha = 0.7) +
+  geom_text(aes(label = round(Value, 0)), vjust = -0.5, size = 2, color = "black", 
+            position = position_dodge(width = 0.9)) +  # Add values on top of bars
+  facet_grid(SNP ~ ., scales = "free_x", switch = "x") +  # Place SNP labels on top with common x-axis
+  labs(
+    # title = "AIC and BIC Comparison Across SNPs and Covariates",
+       x = "Covariate Combinations",
+       y = "Model Performance (AIC / BIC Value) ") +
+  scale_fill_manual(values = c("BIC" = "#2ca02c", "AIC" = "#1f77b4")) +  # Custom colors
+  theme_bw() + 
+  scale_y_continuous(expand = c(0, 0),
+                     limits = c(0, max(results_long$Value) * 1.1)) +  # Adjust y-axis limits
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 8, family = "Arial", color = "black"),  # Rotate x-axis labels and reduce size
+    axis.text.y = element_text(size = 8, family = "Arial", color = "black"),  # Reduce y-axis text size
+    strip.text.y = element_text(size = 7.5, face = "bold", family = "Arial"),  # Set facet label size for SNPs at the top
+    strip.placement = "outside",  # Place facet strip labels outside plot area
+    # strip.background = element_blank(),  # Remove strip background for cleaner look
+    legend.title = element_blank(),  # Remove legend title for clarity
+    legend.text = element_text(size = 8),  # Reduce legend text size
+    # legend.position = "top",  # Move legend to the bottom
+    legend.direction = "vertical",  # Arrange legend items horizontally
+    plot.title = element_text(size = 10),  # Reduce plot title size
+    plot.margin = margin(10, 10, 10, 10)  # Adjust margins to prevent clipping
+  )
+
+# Save the combined plot
+ggsave(here("Samples538_A_Geno_Microbiome/A3_AIC_BIC_comp",
+            "AIC_BIC_comparison.jpg"),
+       width = 6.5, height = 9, units = "in"
+)
+
+
+
+```
+
+
+
+
+
+
+
+

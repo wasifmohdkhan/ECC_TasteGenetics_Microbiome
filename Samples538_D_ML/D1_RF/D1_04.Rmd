@@ -1,0 +1,587 @@
+---
+title: "Covariates_variants_16S_ITS ML models comparison and RF vip"
+output: html_document
+date: "2024-01-02"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# to run it in the background keep it commented out and run it in the terminal
+```{r}
+# job::job({ rmarkdown::render("/media/Second_stor/wasif/WK_Rprojects/RP_240910_Taste_Genes_Analysis_2/Samples538_D_ML/D1_RF/D1_04.Rmd")}, title = "Running Rmd D1_04 in background")
+```
+
+## R Markdown
+```{r}
+rm(list = ls())
+set.seed(2345)
+```
+
+# To print the start time
+```{r}
+start_time = Sys.time()
+start_time
+```
+## File name prefiex
+
+```{r}
+file_name_ext = "D1_04_Covariates_variants_16S_ITS"
+
+```
+
+# Libraries
+
+```{r}
+library(here)
+library(dplyr)
+library(tibble)
+library(ggplot2)
+library(stringr)
+library(pROC) #ggroc
+library(ranger)
+library(SIAMCAT)
+library(mikropml)
+library(progressr)
+
+library(tidymodels)
+library(yardstick)
+library(lightgbm)
+library(bonsai)
+library(dials)
+library(vip)
+library(recipes)
+
+# library(PCAtools) # for the command PCAtools::pca
+# library(mixOmics)
+# library(phyloseq)
+# library(microbiome)
+# library(PLSDAbatch)
+# library(vegan) #varpart
+```
+
+
+# To print the start time
+```{r}
+start_time = Sys.time()
+start_time
+```
+
+
+# for parallelization registeration
+```{r}
+library(foreach)
+library(doParallel)
+
+doFuture::registerDoFuture()
+future::plan(future::multisession, workers = 30)
+```
+
+
+## Need three tables
+1. A microbiome table
+
+16S microbiome
+#### For microbiome data use Maaslin features for consistency in naming
+```{r}
+# Import the Maaslin features
+Plaque538_16S_Species_CLR = readr::read_tsv(here("Samples538_A_Geno_Microbiome/A2_Maaslin/Maaslin2_16S_Species_output/features",
+                                            "filtered_data_norm.tsv"))
+Plaque538_16S_Species_CLR
+```
+ITS microbiome
+```{r}
+# Import the Maaslin features
+Plaque538_ITS_Species_CLR = readr::read_tsv(here("Samples538_A_Geno_Microbiome/A2_Maaslin/Maaslin2_ITS_Species_output/features",
+                                            "filtered_data_norm.tsv"))
+Plaque538_ITS_Species_CLR
+
+```
+
+
+```{r}
+
+Plaque538_16S_ITS_Species_CLR_OTU = full_join(Plaque538_16S_Species_CLR, Plaque538_ITS_Species_CLR, by = "feature") %>%
+  rename(IID = feature)
+Plaque538_16S_ITS_Species_CLR_OTU %>% head()
+
+# Plaque538_16S_ITS_Species_CLR_OTU_2 = Plaque538_16S_ITS_Species_CLR_OTU %>%
+#   # column_to_rownames(var = "IID") %>%
+#   # dplyr::select(-FID) %>% 
+#   identity()
+# Plaque538_16S_ITS_Species_CLR_OTU_2 
+
+Plaque538_16S_ITS_Species_CLR_OTU_names = Plaque538_16S_ITS_Species_CLR_OTU %>% 
+  dplyr::select(-IID) %>%
+  colnames()
+Plaque538_16S_ITS_Species_CLR_OTU_names
+```
+
+
+
+## microbiome file with only Maaslin2 significant species
+
+```{r}
+Maaslin2_16S_ITS_features =
+  readRDS(here("Samples538_A_Geno_Microbiome/A2_Maaslin",
+               "A2_04_Species_coef_qval_16S_ITS.rds"))
+Maaslin2_16S_ITS_features
+
+# Maaslin2_16S_ITS_features_2 = Maaslin2_16S_ITS_features %>%
+#   # column_to_rownames(var = "IID") %>%
+#   dplyr::select(-FID) %>%
+#   # as.matrix() %>%
+#   # filter(IID %in% rownames(Samples538_covariates_vcf_raw)) %>%
+#   column_to_rownames(var = "IID") %>%
+#   identity()
+# Maaslin2_16S_ITS_features_2 %>% head()
+
+Maaslin2_16S_ITS_features_names = Maaslin2_16S_ITS_features %>%
+  filter(q_values < 0.01) %>%
+  pull(OTUs)
+Maaslin2_16S_ITS_features_names
+
+```
+
+
+
+
+```{r}
+# Plaque538_16S_ITS_Species_CLR_OTU_sig = Plaque538_16S_ITS_Species_CLR_OTU_2 %>%
+#   # dplyr::select(one_of(Maaslin2_16S_ITS_features_names)) %>%
+#   identity()
+# Plaque538_16S_ITS_Species_CLR_OTU_sig
+
+# ## feature names
+# Plaque538_16S_ITS_Species_CLR_OTU_sig_names = Plaque538_16S_ITS_Species_CLR_OTU_sig %>%
+#   dplyr::select(-IID) %>%
+#   names()
+# Plaque538_16S_ITS_Species_CLR_OTU_sig_names
+
+```
+
+
+
+
+## load recoded vcf file to make a new vcf which as only the above variants
+```{r}
+Samples538_recoded_vcf <- 
+  read.table(here("Samples538_A_Geno_Microbiome/A1_Plink/A1_00_Plink_files",
+                  "Samples538_55gene_Plink.vcf.2.raw"),
+                        header = T)
+Samples538_recoded_vcf[, 1:10]  %>% head()
+
+
+# Create a vector of column names
+columns_to_remove <- c("FID", "PAT", "MAT", "SEX", "PHENOTYPE")
+
+
+Samples538_recoded_vcf_2 = Samples538_recoded_vcf %>%
+  column_to_rownames(var = "IID") %>%
+  dplyr::select(-c(columns_to_remove)) %>%
+  # replace missing values with 0
+  mutate(across(everything(), ~if_else(is.na(.), 0, .)))  %>% 
+  # to make it a dominant vcf table
+  mutate(across(everything(), ~case_when(
+  . == 2 ~ 1,  # Replace 2 with 1
+  TRUE ~ .     # Keep all other values the same
+  ))) %>%
+  # change the variants to factor
+  mutate(across(everything(), as.factor)) %>%
+  ## IID column is required for merging
+  # rownames_to_column(var = "IID") %>% 
+  identity()
+
+Samples538_recoded_vcf_2 %>% head()
+```
+## Load the variant file
+```{r}
+Samples538_Plink_logit_covASPB_w_anno <- 
+  read.table(here("Samples538_A_Geno_Microbiome/A1_Plink/A1_02_Plink_dominant",
+                  "A1_02_Samples538_55gene_logistic_dominant_cov_anno.txt"),
+                                                          header = T)
+Samples538_Plink_logit_covASPB_w_anno %>% head()
+
+Samples538_Plink_logit_covASPB_w_anno_2 = Samples538_Plink_logit_covASPB_w_anno %>% 
+  arrange(P_BH) %>%                 # Sort by P_BH in ascending order
+  slice_head(prop = 0.05) %>%          # Select the top 1% of rows
+  filter(P_BH < 0.05) %>%
+  filter(A1 != '*') %>%
+  # mutate(SNP_A1 = paste(SNP, A1, sep = "_")) %>% 
+  identity()
+Samples538_Plink_logit_covASPB_w_anno_2 
+
+Samples538_Plink_logit_covASPB_w_anno_2_sig = Samples538_Plink_logit_covASPB_w_anno_2 %>%
+  filter(P_BH < 0.05) %>%
+  pull(SNP)
+Samples538_Plink_logit_covASPB_w_anno_2_sig
+```
+
+```{r}
+Samples538_recoded_vcf_sig = Samples538_recoded_vcf_2 %>%
+  dplyr::select(Samples538_Plink_logit_covASPB_w_anno_2$SNP) %>% 
+  rownames_to_column(var = "IID")
+Samples538_recoded_vcf_sig
+
+## variant names
+Samples538_recoded_vcf_sig_names = Samples538_recoded_vcf_sig %>% 
+  dplyr::select(-IID) %>%
+  names()
+Samples538_recoded_vcf_sig_names 
+```
+
+
+
+##covariate
+
+## Load the metadata file
+```{r}
+Samples538_covariates <- 
+  read.table(here("Samples538_A_Geno_Microbiome/A1_Plink/A1_00_Plink_files",
+                           "Samples538_Combined_covariates_PCA.txt"),
+                      header = T)
+Samples538_covariates %>% head()
+
+
+```
+
+
+```{r}
+Samples538_covariates %>% group_by(Sex) %>% summarise(n = n())
+Samples538_covariates %>% group_by(ECC_status) %>% summarise(n = n())
+```
+
+Required by plink Binary ('0' = control, '1' = case)
+Required by plink Sex code ('1' = male, '2' = female, '0' = unknown)
+FID (Family ID) and IID (Individual ID) for it to correctly identify individuals
+mbQTL can not take non numerical covariates
+
+```{r}
+
+covariates <- c("Sex", "Age", "RuralUrban", "SEFI_score")#, "PC1", "PC2", "PC3", "PC4", "PC5")
+
+Samples538_covariates_2 = Samples538_covariates %>% 
+  dplyr::select(IID, ECC_status, Sex, Age, RuralUrban, SEFI_score, PC1, PC2, PC3, PC4, PC5) %>%
+  # mutate(FID = IID) %>%
+  mutate(Sex = case_when( # AS Original in data 1, Female | 2, Male 
+    Sex == 0 ~ "Female",
+    Sex == 1 ~ "Male")) %>% 
+  mutate(Sex = case_when( # AS 	required by plink Sex code ('1' = male, '2' = female, '0' = unknown)
+    Sex == "Female" ~ 2,
+    Sex == "Male" ~ 1,
+    TRUE ~ 0 )) %>% 
+  dplyr::select(IID, ECC_status, covariates) %>%
+  mutate(across(c(ECC_status, Sex, RuralUrban), as.factor)) %>% 
+  # column_to_rownames(var = "IID") %>% 
+  identity()
+
+Samples538_covariates_2 
+
+
+# Samples538_covariates_2_t = Samples538_covariates_2 %>%
+#   as.matrix() %>% 
+#   t() %>% 
+#   as.data.frame()
+# Samples538_covariates_2_t 
+```
+
+
+
+
+
+
+
+
+
+
+# combine all the datasets
+
+
+```{r}
+# Combine datasets by joining on "IID" and applying transformations in a streamlined manner
+Samples538_covariates_vcf_clr_microbiome <- Samples538_covariates_2 %>%
+  inner_join(Samples538_recoded_vcf_sig, by = "IID") %>%
+  inner_join(Plaque538_16S_ITS_Species_CLR_OTU, by = "IID") %>%
+  # Remove rows with NA values
+  na.omit() %>%
+  identity()
+
+Samples538_covariates_vcf_clr_microbiome
+```
+
+
+### Remove the data not required
+
+```{r}
+## comment out the line which is required
+Samples538_ml_data <- Samples538_covariates_vcf_clr_microbiome %>%
+  as_tibble() %>% # to remove the numbered row names
+  column_to_rownames("IID") %>% 
+  # remove covariates
+  # dplyr::select(-all_of(covariates)) %>%
+  # remove the variants
+  # dplyr::select(-all_of(Samples538_recoded_vcf_sig_names)) %>%
+  # remove microbiome
+  # dplyr::select(-all_of(Plaque538_16S_ITS_Species_CLR_OTU_sig_names)) %>%
+  identity()
+Samples538_ml_data
+``` 
+
+
+
+```{r}
+# Set a seed for reproducibility
+set.seed(12345)
+
+# Splitting the dataset
+split <- initial_split(Samples538_ml_data, prop = 0.8)
+train_data <- training(split)
+test_data <- testing(split)
+
+# Define a recipe for preprocessing
+recipe <- recipe(ECC_status ~ ., data = train_data) %>%
+          step_nzv(all_predictors())
+
+# Prepare the recipe with training data
+prepared_recipe <- prep(recipe, training = train_data)
+
+# Apply the recipe to train and test data
+train_data_baked <- bake(prepared_recipe, new_data = train_data)
+test_data_baked <- bake(prepared_recipe, new_data = test_data)
+
+# Model specifications with tunable parameters
+Ridge_spec <- logistic_reg(penalty = tune(), mixture = 0) %>%
+  set_engine("glmnet") %>%
+  set_mode("classification")
+
+Lasso_spec <- logistic_reg(penalty = tune(), mixture = 1) %>%
+  set_engine("glmnet") %>%
+  set_mode("classification")
+
+SVM_spec <- svm_poly(cost = tune(),
+                     degree = tune()) %>%
+  set_engine("kernlab") %>%
+  set_mode("classification")
+
+RandomForest_spec <- rand_forest(
+  trees = tune(),
+  mtry = tune(),
+  min_n = tune()
+  ) %>%
+  set_engine("ranger", num.threads = 40,
+             importance = "impurity") %>%
+  set_mode("classification")
+
+LightGBM_spec <- boost_tree(trees = tune(),
+                        min_n = tune(),
+                        tree_depth = tune(),
+                        learn_rate = tune(),
+                        mtry = tune()
+                        ) %>%
+  set_engine("lightgbm", num_threads = 40) %>%
+  set_mode("classification")
+
+# Cross-validation setup
+cv <- vfold_cv(train_data_baked, v = 5, strata = ECC_status)
+```
+
+
+```{r}
+# Workflows for each model
+workflows <- list(
+  Ridge = workflow() %>% add_model(Ridge_spec) %>% add_formula(ECC_status ~ .),
+  Lasso = workflow() %>% add_model(Lasso_spec) %>% add_formula(ECC_status ~ .),
+  SVM = workflow() %>% add_model(SVM_spec) %>% add_formula(ECC_status ~ .),
+  RandomForest = workflow() %>% add_model(RandomForest_spec) %>% add_formula(ECC_status ~ .), # remove comma if commenting the next line
+  LightGBM = workflow() %>% add_model(LightGBM_spec) %>% add_formula(ECC_status ~ .)
+)
+
+# Define different grid sizes for each model
+grid_sizes <- list(
+  Ridge = 100,
+  Lasso = 100,
+  SVM = 200,
+  RandomForest = 300 , # remove comma if commenting the next line
+  LightGBM = 50
+)
+  # LightGBM with size 10 takes aroung 1.8 hours for 16S train data
+```
+
+
+```{r}
+# Set up parallel backend
+# registerDoParallel(cores = 20)  # Adjust the number of cores based on your machine
+
+# Tuning each model with parallel processing and timing each process
+tuning_results <- list()
+tuning_times <- list()
+
+for (model in names(workflows)) {
+  start_time <- Sys.time()  # Start timer
+
+  # Extract the model specification from the workflow
+  model_spec <- workflows[[model]] %>% pull_workflow_spec()
+
+  if (is.null(model_spec)) {
+    stop(paste("The model specification for", model, "is NULL. Please check your workflow setup."))
+  }
+
+  # Finalize parameters based on the training data
+  params <- parameters(model_spec) %>% finalize(train_data_baked)
+
+  # Create a random grid with the finalized parameters
+  grid_randomized <- grid_random(params, size = grid_sizes[[model]])
+
+  tuning_results[[model]] <- tune_grid(
+    workflows[[model]],
+    resamples = cv,
+    grid = grid_randomized,
+    # metrics = yardstick::metric_set(pr_auc),
+    control = control_grid(save_pred = TRUE, verbose = TRUE)
+  )
+
+  end_time <- Sys.time()  # End timer
+  tuning_times[[model]] <- end_time - start_time  # Calculate time taken
+  print(paste("Time taken for tuning", model, ":", tuning_times[[model]]))
+}
+
+# Optional: Stop parallel backend if used
+# stopImplicitCluster()
+
+saveRDS(tuning_results,
+        file = here("Samples538_D_ML/D1_RF",
+            paste0(file_name_ext, "_tuning_results.rds")))
+```
+
+```{r}
+tuning_results <- readRDS(file = here("Samples538_D_ML/D1_RF",
+            paste0(file_name_ext, "_tuning_results.rds")))
+```
+
+
+```{r}
+# Use a lambda function to pass "metric" explicitly
+best_params <- map(tuning_results, ~ select_best(.x, metric = "roc_auc"))
+
+# Finalizing models with best parameters
+final_models <- map2(workflows, best_params, finalize_workflow)
+
+# Fitting the final models
+fits <- map(final_models, fit, data = train_data_baked)
+
+# Predict and evaluate
+results <- map_dfr(names(fits), ~{
+  preds <- predict(fits[[.x]], test_data_baked, type = "prob")
+  bind_cols(preds, test_data_baked, model_id = .x)  # Add model_id column with model names
+})
+
+# Now model_id column will have actual model names
+# Convert 'ECC_status' to a factor if it's not already
+results$ECC_status <- as.factor(results$ECC_status)
+# Assuming you have multiple models in 'results'
+
+# Calculate ROC curve for each model separately and bind the results
+roc_curve_data <- results %>%
+  group_by(model_id) %>%
+  group_modify(~roc_curve(.x, truth = ECC_status, .pred_1, event_level = "second")) %>%
+  ungroup()
+roc_curve_data
+
+# Then, calculate AUROC for each model
+auroc_values <- results %>%
+  group_by(model_id) %>%
+  group_modify(~roc_auc(.x, truth = ECC_status, .pred_1, event_level = "second"), .groups = 'drop') %>%
+  ungroup()
+
+# Combine model names with AUROC values
+auroc_values <- auroc_values %>%
+  mutate(AUROC = .estimate)  %>% 
+  dplyr::select(model_id, AUROC)
+
+# Then, calculate AUROC for each model
+auprc_values <- results %>%
+  group_by(model_id) %>%
+  group_modify(~pr_auc(.x, truth = ECC_status, .pred_1, event_level = "second"), .groups = 'drop') %>%
+  ungroup()
+
+# Combine model names with AUROC values
+
+auprc_values <- auprc_values %>%
+  mutate(AUPRC = .estimate)  %>% 
+  dplyr::select(model_id, AUPRC)
+
+auroc_auprc_values =  full_join(auroc_values, auprc_values)
+auroc_auprc_values
+
+saveRDS(auroc_auprc_values,
+        here("Samples538_D_ML/D1_RF",
+             paste0(file_name_ext, "_auroc_auprc_values.rds")
+             ))
+```
+
+
+```{r}
+# Join this with roc_curve_data
+roc_curve_data_2 <- roc_curve_data %>%
+  left_join(auroc_auprc_values, by = "model_id") %>% 
+  mutate(Model_performance = paste(model_id, "AUROC:", round(AUROC, 3), "AUPRC:", round(AUPRC, 3) ))
+
+# Custom label formatting function
+format_ticks <- function(x) {
+  ifelse(x == 0, "0", sprintf("%.2f", x))
+}
+
+
+# Plot the ROC curves with AUROC values in the legend
+ggplot(roc_curve_data_2, aes(x = 1 - specificity, y = sensitivity, color = Model_performance)) +
+  geom_path() +
+  coord_equal() +
+  scale_x_continuous(limits = c(0, 1), expand = c(0, 0), labels = format_ticks) +  # Custom labels for x-axis
+  scale_y_continuous(limits = c(0, 1), expand = c(0, 0), labels = format_ticks) +  # Custom labels for y-axis
+  labs(title = "Variants_AUROC_Comparison") +
+  theme(
+    legend.title = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.5)  # Add a box around the plot
+  ) +
+  theme_bw()
+
+ggsave(here("Samples538_D_ML/D1_RF",
+            paste0(file_name_ext, "_AUROC_Comparison.png")
+             ))
+
+```
+
+## Variable importance
+
+```{r}
+# Extract the fitted model from the workflow
+RandomForest_fit <- pull_workflow_fit(fits[["RandomForest"]])
+  
+# Use vip to extract variable importance
+VIP_df_RF <- vi(RandomForest_fit,
+                     num_features = 20L,
+                     geom = "col")
+VIP_df_RF
+
+VIP_df_RF = VIP_df_RF %>% 
+  mutate(Relative_importance = Importance / max(Importance)) %>% 
+   head(15) %>% 
+  mutate(Variable = factor(Variable, levels = unique(rev(Variable)))) 
+
+
+saveRDS(VIP_df_RF, here("Samples538_D_ML/D1_RF",
+                        paste0(file_name_ext, "_VIP_RF.rds")
+             ))
+
+
+VIP_df_RF_ggplot =
+ggplot(VIP_df_RF, aes(y = Variable, x = Relative_importance)) +
+  geom_bar(stat = "identity") +
+  labs(x = "Relative Variable Importance",  # Replace with your x-axis label
+       y = "Covariates_variants_16S_ITS Features",  # Replace with your y-axis label
+       title = "Covariates_variants_16S_ITS_variable_importance") +
+  scale_y_discrete(labels = function(x) abbreviate(x, minlength = 40)) 
+VIP_df_RF_ggplot
+
+```

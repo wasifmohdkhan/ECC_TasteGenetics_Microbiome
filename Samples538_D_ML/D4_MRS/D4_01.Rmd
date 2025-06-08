@@ -1,0 +1,222 @@
+---
+title: "Untitled"
+output: html_document
+date: "2024-12-20"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+```{r}
+rm(list = ls())
+```
+
+### Libraries
+```{r}
+library(here)
+library(tidyverse)
+library(MRS)
+require(phyloseq)
+```
+
+
+### Import Khan2024 dataset
+```{r}
+Plaque538_16S_Species_TSS_OTU = 
+  read_tsv(here("Samples538_A_Geno_Microbiome/A2_Maaslin/Maaslin_TSS_data/Maaslin2_16S_Species_TSS_output/features",
+                                             "filtered_data_norm.tsv")) %>% 
+  # dplyr::select(-ECC_status) %>% 
+  identity()
+Plaque538_16S_Species_TSS_OTU
+
+Plaque538_16S_Species_TSS_OTU_2 = Plaque538_16S_Species_TSS_OTU %>%
+  rename(IID = feature) %>% 
+  replace(is.na(.), 0) %>%
+  identity()
+Plaque538_16S_Species_TSS_OTU_2
+
+```
+
+##covariate
+
+## Load the metadata file
+```{r}
+Samples538_covariates <- 
+  read.table(here("Samples538_A_Geno_Microbiome/A1_Plink/A1_00_Plink_files",
+                           "Samples538_Combined_covariates_PCA.txt"),
+                      header = T)
+Samples538_covariates %>% head()
+
+Samples538_covariates_2 = Samples538_covariates %>% 
+  dplyr::select(IID, ECC_status) %>% #, Sex, Age, RuralUrban, SEFI_score, PC1, PC2, PC3, PC4, PC5) %>%
+  identity()
+
+Samples538_covariates_2 
+
+```
+
+
+## Make phyloseq object for Khan_2024
+
+
+```{r}
+# Extract OTU table (excluding IID and ECC_status)
+Samples538_covariates_otu <- Plaque538_16S_Species_TSS_OTU_2 %>%
+  column_to_rownames("IID") %>% 
+  as.matrix() %>%
+  otu_table(taxa_are_rows = FALSE)
+
+# Set "IID" as rownames for sample data
+Samples538_covariates_sample <- Samples538_covariates_2 %>%
+  dplyr::select(IID, ECC_status) %>% 
+  column_to_rownames("IID") %>% 
+  sample_data()
+
+# Create phyloseq object
+Khan_2024_ps <- phyloseq(Samples538_covariates_otu, Samples538_covariates_sample)
+
+# Check the phyloseq object
+Khan_2024_ps
+```
+
+# Import external datasets
+```{r}
+# Define dataset names and folder
+dataset_names <- c("Agnello_2017", "Gomez_2017", "Kalpana_2020", "Teng_2015")
+dataset_folder <- here("Samples538_D_ML/D2_ML_ext_data/Datasets")
+
+# Initialize a list to store datasets and another for phyloseq objects
+dataset_list <- list()
+phyloseq_list <- list()
+
+# First loop: Load all datasets
+for (dataset_name in dataset_names) {
+  # Read dataset and store in dataset_list
+  dataset_list[[dataset_name]] <- readRDS(file.path(dataset_folder, paste0(dataset_name, "_MaAsLin2_TSS_ECCstatus.rds")))
+}
+```
+
+
+```{r}
+# Second loop: Create phyloseq objects
+for (dataset_name in dataset_names) {
+  # Get the dataset
+  data <- dataset_list[[dataset_name]]
+  
+  # Set sampleid as rownames
+  rownames(data) <- data$sampleid
+  
+  # Create sample data (metadata)
+  sample_data <- data.frame(ECC_status = data$ECC_status, row.names = data$sampleid)
+  
+  # Create OTU table (excluding sampleid and ECC_status)
+  otu_table <- as.matrix(data[, -c(1, 2)])
+  
+  # Create phyloseq object
+  ps <- phyloseq(otu_table(otu_table, taxa_are_rows = FALSE), sample_data(sample_data))
+  
+  # Store the phyloseq object in the phyloseq_list
+  phyloseq_list[[dataset_name]] <- ps
+}
+
+# The phyloseq objects are now stored in phyloseq_list
+```
+
+```{r}
+phyloseq_list[["Agnello_2017"]]
+
+phyloseq_list[["Gomez_2017"]]
+
+phyloseq_list[["Agnello_2017"]] %>% otu_table() %>% as.data.frame()
+```
+
+### Test on on dataset
+```{r, include=FALSE, results='asis'}
+res=MRS(Khan_2024_ps,
+        phyloseq_list[["Gomez_2017"]],
+        GroupID="ECC_status",
+        DA.method="Maaslin2",
+        measurement="observed")
+ AUC=res[[3]]
+ AUC
+```
+
+
+## Apply on all the datasests
+```{r, include=FALSE, results='asis'}
+# List to store AUC results
+auc_results <- list()
+diversity_measure = "observed"
+# Loop through each dataset in phyloseq_list
+for (dataset_name in dataset_names) {
+
+  # Perform MRS analysis
+  res <- MRS(
+    Khan_2024_ps, 
+    phyloseq_list[[dataset_name]], 
+    GroupID = "ECC_status", 
+    DA.method = "Maaslin2", 
+    measurement = diversity_measure
+  )
+  
+  # Extract AUC results
+  auc <- res[[3]]
+  auc_results[[dataset_name]] <- auc
+  auc_results[[dataset_name]] <- as.data.frame(auc_results[[dataset_name]])
+}
+```
+
+
+```{r}
+# Combine AUC results into a single data frame
+auc_results_df <- do.call(rbind, auc_results)
+auc_results_df
+```
+
+
+```{r}
+# Step 1: Keep one row with ".Discovery cohort" and rename it as Khan_2024_train
+auc_results_clean <- auc_results_df %>%
+  rownames_to_column("Dataset") %>%
+  filter(!duplicated(grepl("\\.Discovery cohort", Dataset)) | !grepl("\\.Discovery cohort", Dataset)) %>%
+  mutate(
+    Dataset = ifelse(grepl("\\.Discovery cohort", Dataset), "Khan_2024_train", Dataset)
+  )
+
+# Step 2: Replace ".Validation cohort" with "_test" in the remaining rows
+auc_results_clean <- auc_results_clean %>%
+  mutate(
+    Dataset = gsub("\\.Validation cohort", "_test", Dataset)
+  )
+
+# Step 3: Ensure "Khan_2024_train" appears first
+auc_results_clean <- auc_results_clean %>%
+  mutate(Dataset = factor(Dataset, levels = c("Khan_2024_train", sort(setdiff(Dataset, "Khan_2024_train")))))
+```
+
+
+```{r}
+library(forcats)  # Required for fct_rev
+
+ggplot(auc_results_clean, aes(x = fct_rev(Dataset), y = AUC)) +
+  geom_point(size = 4) +
+  geom_errorbar(aes(ymin = LCI, ymax = UCI), width = 0.2) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", color = "red", size = 0.8) +
+  scale_y_continuous(limits = c(0, 1)) +
+  labs(
+    title = paste0("AUC with Microbiome Risk Score"),
+    x = "Dataset",
+    y = "AUC (with 95% CI)"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  coord_flip()
+
+
+
+```
+
+
+

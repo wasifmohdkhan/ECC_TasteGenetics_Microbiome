@@ -1,0 +1,174 @@
+---
+title: "combine plots plink dominant and SKAT 2 plots"
+output: html_document
+date: "2024-11-17"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+```{r}
+rm(list = ls())
+```
+
+
+## Load libraries
+```{r}
+library(tidyverse)
+library(cowplot)
+library(here)
+library(extrafont)
+library(patchwork)
+# extrafont::font_import(prompt = FALSE)  # Import fonts; suppress prompts
+```
+
+
+## Load Plink data
+
+
+
+## combine dominant  model plots
+
+```{r}
+A1_02_Samples538_55gene_logistic_dominant_QQ_plot = 
+  readRDS(file =here("Samples538_A_Geno_Microbiome/A1_Plink/A1_02_Plink_dominant",
+            "A1_02_Samples538_55gene_logistic_dominant_QQ_plot.rds")
+        )
+
+A1_02_Samples538_55gene_logistic_dominant_volcano_plot =
+  readRDS(here("Samples538_A_Geno_Microbiome/A1_Plink/A1_02_Plink_dominant",
+            "A1_02_Samples538_55gene_logistic_dominant_volcano_plot.rds")
+        )
+```
+
+
+
+## use cowplot to combine them horizontally
+
+
+
+```{r}
+
+# Extract the legend from the volcano plot
+volcano_plot_legend <- cowplot::get_legend(A1_02_Samples538_55gene_logistic_dominant_volcano_plot)
+# Scale the legend
+volcano_plot_legend_scaled <- ggdraw() + draw_grob(volcano_plot_legend, scale = 0.25)  # Adjust 'scale' to control legend size
+
+plot1 <- A1_02_Samples538_55gene_logistic_dominant_QQ_plot + theme(legend.position = "none")
+
+plot2 <- A1_02_Samples538_55gene_logistic_dominant_volcano_plot + theme(legend.position = "none")
+
+# Combine the plots (without the legend)
+dominant_combined <- plot_grid(plot1, plot2,
+                               labels = c("A", "B"),
+                               label_size = 10,
+                               label_y = 1.05,
+                              # label_x = -0.02,
+                               ncol = 2)
+
+# Add the scaled legend to the combined plot
+dominant_combined_legend <- plot_grid(
+  dominant_combined,
+  volcano_plot_legend,                  
+  nrow = 1,                       
+    rel_widths = c(20, 6.5)           
+)
+
+# Display the final combined plot
+print(dominant_combined_legend)
+
+
+```
+
+
+
+
+
+
+
+## Load SKAT data
+```{r}
+
+A4_02_Common_Rare_wout_Weights_SKAT_res = 
+  readRDS(here("Samples538_A_Geno_Microbiome/A4_SKAT/A4_01_Plink_additive",
+            "A4_02_Common_Rare_wout_Weights_SKAT_res.rds")
+        )
+
+A4_03_Rare_w_Weights_SKAT_res = 
+  readRDS(here("Samples538_A_Geno_Microbiome/A4_SKAT/A4_01_Plink_additive",
+            "A4_03_Rare_w_Weights_SKAT_res.rds")
+        )
+
+```
+
+```{r, fig.width=6.5, fig.height=7}
+ggplot2::ggplot_gtable(ggplot2::ggplot_build(A4_02_Common_Rare_wout_Weights_SKAT_res))
+
+# Ensure legend can be extracted
+common_SKAT_legend = cowplot::get_plot_component(A4_02_Common_Rare_wout_Weights_SKAT_res,
+                            "guide-box", return_all = TRUE)[[3]]
+grid::grid.draw(common_SKAT_legend)
+```
+
+
+```{r}
+my_plot_margins = margin(t=-5, 10, b=-5, 10)
+
+plot2 <- A4_02_Common_Rare_wout_Weights_SKAT_res + 
+  theme(legend.position = "none",
+        axis.title.x = element_text(color = "transparent"),
+    plot.margin = my_plot_margins
+    )
+
+plot3 <- A4_03_Rare_w_Weights_SKAT_res + 
+  theme(legend.position = "none",
+    plot.margin = my_plot_margins
+    )  # Keep x-axis title visible
+
+combined_SKAT_plots <- plot_grid(
+  # plot1,
+  plot2, plot3,
+  ncol = 1,
+  labels = c("C", "D"),
+  label_size = 10,
+  align = "v",
+  axis = "l",
+  rel_heights = c(1, 1)  # Equal spacing; no extra gaps
+)
+
+
+# Combine everything into the final layout
+final_SKAT_plot <- plot_grid(
+  combined_SKAT_plots,
+common_SKAT_legend,
+ncol = 1,
+  rel_heights = c(3, 0.3)  # Adjust as needed for better legend spacing
+)
+final_SKAT_plot
+```
+
+
+# combine Plink and skat plots
+
+
+```{r}
+my_plot_margins = margin(8, 0, 0, 0)
+combined_QQ_volano_SKAT_plot = plot_grid(
+                                    dominant_combined_legend + theme(plot.margin = my_plot_margins),
+                                    final_SKAT_plot ,
+                                    ncol = 1,
+                                    rel_heights = c(1.2, 2)
+                                    )
+combined_QQ_volano_SKAT_plot
+
+# Save the final plot
+ggsave(here("Samples538_A_Geno_Microbiome/A9_Combined_Figures",
+            "A9_01_Combined_Plots.jpg"),
+       plot = combined_QQ_volano_SKAT_plot,
+       width = 6.5, height = 7)
+
+```
+```
+

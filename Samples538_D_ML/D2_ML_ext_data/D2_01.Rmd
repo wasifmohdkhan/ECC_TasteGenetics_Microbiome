@@ -1,0 +1,220 @@
+---
+title: "apply CLR using maaslin2 on external datasets"
+output: html_document
+date: "2024-11-07"
+---
+
+## R Markdown
+```{r}
+rm(list = ls())
+
+```
+
+# Libraries
+```{r}
+library(here)
+library(dplyr)
+library(stringr)
+library(tibble)
+library(phyloseq)
+library(Maaslin2)
+library(phyloseq)
+```
+
+```{r}
+Plaque_Species_raw_count_OTU_table_with_meta_data <- 
+  read.table(here("../Rproj_221101_Plaque_Genus_Species_metaanalysis/Plaque_Species/Species_221101_1_raw_files",
+                "Plaque_Species_raw_count_OTU_table_with_meta_data.txt"),
+           sep = "\t",
+           header = T,
+           check.names = F) 
+Plaque_Species_raw_count_OTU_table_with_meta_data       
+```
+## remove special characters from the column names to match is with Maaslin2 output
+```{r}
+Plaque_Species_raw_count_OTU_table_with_meta_data_2 = 
+  Plaque_Species_raw_count_OTU_table_with_meta_data %>% 
+  rename_with(~ gsub("\\[XI\\]", "", .), .cols = everything()) %>% 
+  rename_with(~ gsub("&", "", .), .cols = everything()) %>% 
+  rename_with(~ gsub("\\(", "", .), .cols = everything()) %>%
+  rename_with(~ gsub("\\)", "", .), .cols = everything()) %>%
+  rename_with(~ gsub("\\[", "", .), .cols = everything()) %>%
+  rename_with(~ gsub("\\]", "", .), .cols = everything()) %>%
+  rename_with(~ gsub("-", "", .), .cols = everything()) %>%
+  # rename_with(~ gsub("[\\(\\)\\[\\]-]", "", .), .cols = everything()) %>% 
+  identity()
+Plaque_Species_raw_count_OTU_table_with_meta_data_2 
+
+Plaque_Species_raw_count_OTU_table_with_meta_data_2 <- 
+  Plaque_Species_raw_count_OTU_table_with_meta_data_2 %>% 
+  rename(ECC_status = Disease_status) %>% 
+  mutate(ECC_status = ifelse(ECC_status == "ECC", 1, 0),
+         ECC_status = as.factor(ECC_status))
+Plaque_Species_raw_count_OTU_table_with_meta_data_2
+```
+
+```{r}
+```
+
+
+
+# Separate each dataset and make phyloseq object
+
+```{r}
+# Split the data by Study_name
+data_split <- split(Plaque_Species_raw_count_OTU_table_with_meta_data_2,
+                    Plaque_Species_raw_count_OTU_table_with_meta_data_2$Study_name)
+
+# Create a function to process each study dataset
+create_phyloseq_object <- function(data) {
+  # Set sampleid as row names and remove unnecessary columns
+  data <- data %>%
+    as_tibble() %>%
+    column_to_rownames("sampleid") %>%
+    dplyr::select(-c("Host_age", "Host_sex", "Sample_type", "Geo_location", "Study_name"))
+  
+  # Explicitly separate OTU table and sample data
+  otu_table_data <- as.matrix(data %>% dplyr::select(-"ECC_status"))
+  sample_data_data <- data %>% dplyr::select("ECC_status") %>% as.data.frame()
+  
+  # Convert to phyloseq objects
+  phy_otu_table <- otu_table(otu_table_data, taxa_are_rows = F)
+  phy_sample_data <- sample_data(sample_data_data)
+  
+  # Add prefix 'B_' to column names in OTU table
+  colnames(phy_otu_table) <- paste0("B_s_", colnames(phy_otu_table))
+  
+  # Combine into phyloseq object
+  phyloseq(phy_otu_table, phy_sample_data)
+}
+
+# Apply the function to each study dataset
+phyloseq_list <- lapply(data_split, create_phyloseq_object)
+
+# Access specific phyloseq objects with "ps" suffix, without prefix
+Agnello_2017_ps <- phyloseq_list[["Agnello_2017"]]
+Gomez_2017_ps <- phyloseq_list[["Gomez_2017"]]
+Kalpana_2020_ps <- phyloseq_list[["Kalpana_2020"]]
+Teng_2015_ps <- phyloseq_list[["Teng_2015"]]
+
+# View examples
+Agnello_2017_ps
+Gomez_2017_ps
+Kalpana_2020_ps
+Teng_2015_ps
+```
+
+```{r, echo=TRUE, include=FALSE}
+minimum_prevalence = 0.05
+# List of base dataset names (without "_ps" suffix)
+dataset_names <- c("Agnello_2017", "Gomez_2017", "Kalpana_2020", "Teng_2015")
+
+# Function to process phyloseq data and apply MaAsLin2
+process_phyloseq_data <- function(base_name) {
+  
+  # Add "_ps" suffix to the base dataset name
+  dataset_name <- paste0(base_name, "_ps")
+  
+  # Get the dataset variable by name with "_ps" suffix
+  phyloseq_data <- get(dataset_name)
+  
+  # Extract feature table and metadata from the phyloseq object
+  feature_table <- as.data.frame(otu_table(phyloseq_data))
+  metadata <- as.data.frame(sample_data(phyloseq_data))
+  
+  # Define output folder using here()
+  output_dir <- here("Samples538_D_ML/D2_ML_ext_data/Datasets",
+                     paste0("Maaslin2_CLR_results_", base_name)
+                     )
+  
+  # Check if the directory exists, if not, create it
+  if (!dir.exists(output_dir)) {
+    dir.create(output_dir, recursive = TRUE)  # 'recursive = TRUE' ensures that intermediate directories are also created
+    message("Directory created: ", output_dir)
+  } else {
+    message("Directory already exists: ", output_dir)
+  }
+  
+  # Apply MaAsLin2
+  Maaslin2_res_Species_16S <- Maaslin2(input_data = otu_table(phyloseq_data),
+                                       input_metadata = sample_data(phyloseq_data) %>% data.frame(),
+                                       output = output_dir,
+                                       normalization = "CLR",
+                                       transform = "NONE",
+                                       fixed_effects =  c("ECC_status"),
+                                       cores = 40,
+                                       max_significance = 1,
+                                       min_prevalence = minimum_prevalence
+  )
+  
+  message("MaAsLin2 analysis complete for dataset: ", base_name)
+}
+
+# Loop through all datasets and process them
+for (base_name in dataset_names) {
+  process_phyloseq_data(base_name)
+}
+
+
+
+```
+
+## Load external dataset
+```{r}
+# Initialize an empty list to store the results for all models and datasets
+results_list <- list()
+
+# Define dataset names
+dataset_names <- c("Agnello_2017", "Gomez_2017", "Kalpana_2020", "Teng_2015")  # External datasets
+
+# Set the folder for the external datasets
+dataset_folder <- here("Samples538_D_ML/D2_ML_ext_data/Datasets")  # Folder where the external dataset is stored
+
+
+# Loop through the dataset names
+for (dataset_name in dataset_names) {
+  
+  
+  ## Step 2: Import the corresponding Maaslin2 results (.tsv)
+  maaslin_path <- here(dataset_folder,
+                       paste0("Maaslin2_CLR_results_", dataset_name),
+                       "features",
+                       "filtered_data_norm.tsv")
+  
+  maaslin_filt_norm <- read_tsv(maaslin_path)
+  
+  # Rename 'feature' column to 'IID'
+  maaslin_filt_norm_2 <- maaslin_filt_norm %>%
+    column_to_rownames("feature") %>% 
+    identity()
+  
+  dataset_ps = get(paste0(dataset_name, "_ps"))
+  
+  # Create a merged data frame with sample data and OTU table
+  maaslin2_data_CLR_ECCstatus <- merge(
+    dataset_ps %>% sample_data(),
+    maaslin_filt_norm_2,
+    by = "row.names" )
+  
+  maaslin2_data_CLR_ECCstatus = maaslin2_data_CLR_ECCstatus %>%
+    rename(sampleid = "Row.names") %>%
+    # column_to_rownames("sampleid") %>%
+    as.data.frame()
+  
+  
+
+  # Save the output as an .rds file
+  saveRDS(maaslin2_data_CLR_ECCstatus,
+          file = here("Samples538_D_ML/D2_ML_ext_data/Datasets", 
+                          paste0(dataset_name, "_MaAsLin2_CLR_ECCstatus.rds")))
+  
+  # write.table(maaslin2_data_CLR_ECCstatus,
+  #             file = here("Samples538_D_ML/D2_ML_ext_data/Datasets", 
+  #                         paste0(dataset_name, "_MaAsLin2_CLR_ECCstatus.txt")),
+  #             sep = "\t",
+  #             row.names = FALSE,
+  #             quote = FALSE)
+}
+
+
+```

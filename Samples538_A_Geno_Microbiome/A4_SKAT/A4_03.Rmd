@@ -1,0 +1,262 @@
+---
+title: "Apply SKAT without singletons Rare_w_Weights"
+output: html_document
+date: "2024-11-11"
+---
+
+## R Markdown
+```{r}
+rm(list = ls())
+```
+
+```{r}
+file_ext = "A4_03_Rare_w_Weights"
+```
+
+# Load libraries
+
+```{r}
+library(tidyverse)
+library(here)
+library(SKAT)
+# library(snpStats)
+# library(vcfR)
+# library(mbQTL)
+# library(RColorBrewer)
+# library(qqman)
+```
+
+
+```{bash}
+source /home/wasif_pclab/anaconda3/etc/profile.d/conda.sh
+
+conda activate Plink_env
+
+mkdir -p /media/Second_stor/wasif/WK_Rprojects/RP_240910_Taste_Genes_Analysis_2/Samples538_A_Geno_Microbiome/A4_SKAT/A4_01_Plink_additive/
+cd /media/Second_stor/wasif/WK_Rprojects/RP_240910_Taste_Genes_Analysis_2/Samples538_A_Geno_Microbiome/A4_SKAT/A4_01_Plink_additive/
+
+metadata_dir=/media/Second_stor/wasif/WK_Rprojects/RP_230718_Taste_Genes_Analysis_1/Samples538_Analysis/Metadata538_files/
+
+plink \
+--bfile ../A4_00_Plink_files/Samples538_55gene_Plink \
+--geno 0.01 \
+--mac 2 \
+--hwe 0.00001 \
+--make-bed \
+--covar ../A4_00_Plink_files/Samples538_Combined_covariates_PCA.txt \
+--covar-name Age,Sex,PC1,PC2,PC3,PC4,PC5,SEFI_score,Urban_status  \
+--make-pheno ${metadata_dir}/Samples538_Combined_Phenotype.txt 1 \
+--out ./Samples538_55gene_Plink_geno.01_mac2_hwe.00001_fit
+```
+
+## Create setID file required for SKAT from bim file
+
+```{r}
+# Load the bim file
+Samples538_55gene_Plink_bim <- read.table( here("Samples538_A_Geno_Microbiome/A4_SKAT/A4_01_Plink_additive",
+                 "Samples538_55gene_Plink_geno.01_mac2_hwe.00001_fit.bim"),
+                 header = FALSE,
+                 sep = "\t",
+                 stringsAsFactors = FALSE
+)
+Samples538_55gene_Plink_bim
+```
+
+```{r}
+Samples538_55gene_Plink_bim_2 <- Samples538_55gene_Plink_bim %>%
+  dplyr::select(V2) %>%
+  # first convert __ to _ and then extract the gene name
+  mutate(V3 = str_replace_all(V2, "_+", "_")) %>%
+  mutate(Gene = sapply(str_split(V3, "_"), function(x) x[3])) %>% 
+  dplyr::select(Gene, V2) %>% 
+  # some gene name are unknown, remove those rows
+  # do not remove it, it changes the order of the genes
+  # filter(Gene != "unknown") %>% 
+  identity()
+Samples538_55gene_Plink_bim_2
+
+write.table(Samples538_55gene_Plink_bim_2, file = here("Samples538_A_Geno_Microbiome/A4_SKAT/A4_01_Plink_additive",
+                 "Samples538_55gene_Plink_geno.01_mac2_hwe.00001_fit.setID"),
+            row.names = FALSE,
+            col.names = FALSE,
+            quote = FALSE,
+            sep = "\t")
+
+```
+
+## Plink files and new files path
+```{r}
+plink_dir = "Samples538_A_Geno_Microbiome/A4_SKAT/A4_01_Plink_additive"
+# Define file paths
+File.Bed <-   here(plink_dir, "Samples538_55gene_Plink_geno.01_mac2_hwe.00001_fit.bed")
+File.Bim <-   here(plink_dir, "Samples538_55gene_Plink_geno.01_mac2_hwe.00001_fit.bim")
+File.Fam <-   here(plink_dir, "Samples538_55gene_Plink_geno.01_mac2_hwe.00001_fit.fam")
+File.cov <-   here(plink_dir, "Samples538_55gene_Plink_geno.01_mac2_hwe.00001_fit.cov")
+File.SetID <- here(plink_dir, "Samples538_55gene_Plink_geno.01_mac2_hwe.00001_fit.setID")
+File.SSD <-   here(plink_dir, "Samples538_55gene_Plink_geno.01_mac2_hwe.00001_fit.ssd")
+File.Info <-  here(plink_dir, "Samples538_55gene_Plink_geno.01_mac2_hwe.00001_fit.info")
+```
+
+
+```{r}
+# Step 1: Generate SSD and Info files
+Generate_SSD_SetID(File.Bed, File.Bim, File.Fam, File.SetID, File.SSD, File.Info)
+```
+
+
+```{r}
+# Step 2: Open SSD file
+SSD.INFO <- Open_SSD(File.SSD, File.Info)
+```
+
+
+```{r}
+# Step 3: Read phenotype from the FAM file
+FAM <- Read_Plink_FAM(File.Fam, Is.binary = TRUE)
+FAM <- Read_Plink_FAM_Cov(Filename = File.Fam,
+                      File_Cov = File.cov,
+                      Is.binary = TRUE,
+                      cov_header=TRUE )
+y <- FAM$Phenotype
+y
+```
+```{r}
+FAM
+```
+
+
+```{r}
+## prepare covariates
+Age <- FAM$Age
+Sex <- FAM$Sex.x
+PC1 <- FAM$PC1
+PC2 <- FAM$PC2
+PC3 <- FAM$PC3
+PC4 <- FAM$PC4
+PC5 <- FAM$PC5
+SEFI_score <- FAM$SEFI_score
+Urban_status <- FAM$Urban_status
+
+# Step 4: Null Model - For binary phenotype
+obj <- SKAT_Null_Model(y ~ Age+Sex+PC1+PC2+PC3+PC4+PC5+SEFI_score+Urban_status, out_type = "D")
+```
+
+
+```{r}
+# Step 5: Run SKAT-O on all sets
+out <- SKAT.SSD.All(SSD.INFO,
+                    obj,
+                    # kernel = "linear",
+                    max_maf = 0.01,
+                    method = "SKATO", # method = c("davies", "SKATO", "liu", "optimal.adj")
+                    # impute.method="bestguess"
+                    )
+                    
+# Step 7: Close SSD file after use
+Close_SSD()
+```
+
+
+```{r}
+# Step 6: Output results
+out$results %>% arrange(P.value)
+```
+```{r}
+# Step 6: Output results
+# print(out$OUT.snp.mac)
+```
+
+## To select only those genes which are in bed file
+
+```{r}
+Gene55_names = read.table(here("../RP_230718_Taste_Genes_Analysis_1/References_Seqs/bed_files",
+                               "Gene55_names_only.txt"),
+                        header = F)
+Gene55_names
+```
+
+```{r}
+Samples538_55gene_SKAT_res = out$results %>%
+  filter(SetID %in% Gene55_names$V1) %>%
+  arrange(P.value) %>% 
+  # take bh adjusted p value
+  mutate(P_BH = p.adjust(P.value, method = "fdr")) %>%
+  # take log for plotting
+  mutate(log10_P = -log10(P.value),
+         log10_P_BH = -log10(P_BH),
+         SetID = factor(SetID, levels = unique(SetID)) ) %>%
+  identity()
+Samples538_55gene_SKAT_res
+```
+
+# combine graph for unadjusted and adjusted p values
+
+
+```{r}
+#  `Samples538_55gene_SKAT_res` is the original data frame
+Samples538_55gene_long <- Samples538_55gene_SKAT_res %>%
+  pivot_longer(
+    cols = c(log10_P_BH, log10_P),     # Columns to combine
+    names_to = "Significance",                 # New column to hold the variable names
+    values_to = "value"                # New column to hold the values
+  ) %>% 
+  mutate(Significance = factor(Significance, levels = c( "log10_P", "log10_P_BH" )))  # Order the levels
+Samples538_55gene_long
+```
+
+```{r, fig.width=6.5, fig.height=3}
+# Plot overlapping bars with different colors
+gg_plot <-
+ggplot(Samples538_55gene_long, aes(x = SetID, y = value, fill = Significance)) +
+  geom_bar(stat = "identity", position = position_dodge(), alpha = 0.7) +
+  scale_fill_manual(
+  values = c("log10_P_BH" = "darkblue", "log10_P" = "chocolate4"),
+  labels = c("log10_P_BH" = expression(italic(q)-"value"),
+             "log10_P"   = expression(italic(p)-"value"))
+) +  # Custom colors
+  labs(
+    title = "",
+    x = "Gene",
+    y = expression(-log[10](italic(Significance) * ""))
+  ) +
+  theme_bw() +
+  # Expand y-axis and limit
+  scale_y_continuous(expand = c(0, 0), limits = c(0, 4.5) ) +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "grey1") +  # Significance line at p < 0.05
+  
+  annotate("text", x = 1, y = -log10(0.05) + 0.1,
+           label = expression((italic() * "< 0.05")),
+           color = "grey1", size = 2, hjust = -11.5) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 5, family = "sans", color = "black"),
+    axis.text.y = element_text(size = 7, family = "sans", color = "black"),
+    legend.text = element_text(size = 6),   # Adjust legend text size
+    legend.title = element_text(size = 8),
+    axis.title = element_text(size = 8),
+    axis.ticks.y = element_blank(),
+    axis.ticks.x = element_line(size = 0.2 ),
+    legend.key.size = unit(0.3, "cm"),
+    legend.position = "bottom",
+    legend.direction = "horizontal",
+    panel.grid.major = element_line(color = "gray", linewidth = 0.05),  # Faint major gridlines
+    panel.grid.minor = element_line(color = "gray", linewidth = 0.02)   # Faint minor gridlines
+  )
+gg_plot
+
+# save rds
+saveRDS(gg_plot,
+        here("Samples538_A_Geno_Microbiome/A4_SKAT/A4_01_Plink_additive",
+             paste0(file_ext, "_SKAT_res.rds")))
+
+ggsave(plot = gg_plot,
+       filename =here("Samples538_A_Geno_Microbiome/A4_SKAT/A4_01_Plink_additive",
+            paste0(file_ext, "_SKAT_res.jpg")),
+       width = 6.5, height = 3)
+
+```
+
+
+
+
+
+

@@ -1,0 +1,250 @@
+---
+title: "mbQTL_sig_variant_sig_species_dominant_model"
+output: html_document
+date: "2024-08-20"
+
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+```{r}
+rm(list = ls())
+
+```
+
+# Load libraries
+```{r}
+library(tidyverse)
+library(here)
+library(snpStats)
+library(vcfR)
+library(mbQTL)
+library(RColorBrewer)
+```
+
+
+## Load the variant file
+```{r}
+Samples538_Plink_logit_covASPB_w_anno <- 
+  read.table(here("Samples538_A_Geno_Microbiome/A1_Plink/A1_02_Plink_dominant",
+                  "A1_02_Samples538_55gene_logistic_dominant_cov_anno.txt"),
+                                                          header = T)
+Samples538_Plink_logit_covASPB_w_anno %>% head()
+```
+
+
+```{r}
+Samples538_Plink_logit_covASPB_w_anno_2 = Samples538_Plink_logit_covASPB_w_anno %>% 
+  filter(P_BH < 0.05) %>%
+  # Filter to keep only the top 5% rows based on P_BH
+  # filter(P_BH <= quantile(P_BH, 0.10, na.rm = T)) %>%
+  filter(A1 != '*') %>%
+  mutate(SNP_A1 = paste(SNP, A1, sep = "_"))
+Samples538_Plink_logit_covASPB_w_anno_2 
+```
+
+
+
+
+
+
+
+## load recoded vcf file to make a new vcf which as only the above variants
+```{r}
+Samples538_recoded_vcf <- 
+  read.table(here("Samples538_A_Geno_Microbiome/A1_Plink/A1_00_Plink_files",
+                  "Samples538_55gene_Plink.vcf.raw"),
+                        header = T)
+Samples538_recoded_vcf[, 1:10]  %>% head()
+
+Samples538_recoded_vcf_2 = Samples538_recoded_vcf %>%
+  column_to_rownames(var = "IID") %>%
+  # select only the variants in the assoc file
+  dplyr::select(Samples538_Plink_logit_covASPB_w_anno_2$SNP_A1) %>% 
+  # replace missing values with 0
+  mutate(across(everything(), ~if_else(is.na(.), 0, .)))  %>% 
+  # to make it a dominant vcf table
+  mutate(across(everything(), ~case_when(
+  . == 2 ~ 1,  # Replace 2 with 1
+  TRUE ~ .     # Keep all other values the same
+  )))
+
+Samples538_recoded_vcf_2 %>% head()
+```
+
+
+
+## CLR normalized microbiome file with only significant species
+
+```{r}
+
+Maaslin2_16S_ITS_features = read.table(here("../RP_230718_Taste_Genes_Analysis_1/Samples538_Analysis/Microbiome538_files",
+                                            "Maaslin2_16S_ITS_DA_normalized_features.txt"),
+                                       header = T)
+Maaslin2_16S_ITS_features %>% head()
+
+Maaslin2_16S_ITS_features_2 = Maaslin2_16S_ITS_features %>%
+  column_to_rownames(var = "IID") %>%
+  dplyr::select(-FID)
+Maaslin2_16S_ITS_features_2 %>% head()
+```
+
+##covariate
+
+## Load the metadata file
+```{r}
+Samples538_covariates <- 
+  read.table(here("Samples538_A_Geno_Microbiome/A1_Plink/A1_00_Plink_files",
+                           "Samples538_Combined_covariates_PCA.txt"),
+                      header = T)
+Samples538_covariates %>% head()
+
+# Samples538_covariates_2 = Samples538_covariates %>%
+#   mutate(Batch = case_when(
+#     Batch_2 == 0 & Batch_3 == 0 ~ 1,  # If Batch_2 = 0 and Batch_3 = 0, assign Batch = 1
+#     Batch_2 == 1 & Batch_3 == 0 ~ 2,  # If Batch_2 = 1 and Batch_3 = 0, assign Batch = 2
+#     Batch_2 == 0 & Batch_3 == 1 ~ 3   # If Batch_2 = 0 and Batch_3 = 1, assign Batch = 3
+#   )) %>% 
+#   mutate(Batch = as.factor(Batch)) %>%
+#   mutate(ECC_status = case_when(
+#     ECC_status == 0 ~ "CF",
+#     ECC_status == 1 ~ "ECC"
+#   )) %>% 
+#   mutate(ECC_status = as.factor(ECC_status)) %>%
+#   mutate(Sex =  case_when( # # AS 	required by plink Sex code '1' = male, '2' = female, '0' = unknown)
+#     Sex == 1 ~ "Male",
+#     Sex == 2 ~ "Female"
+#   )) %>% 
+#   mutate(Sex = as.factor(Sex))
+# Samples538_covariates_2
+```
+
+
+```{r}
+Samples538_covariates %>% group_by(Sex) %>% summarise(n = n())
+Samples538_covariates %>% group_by(ECC_status) %>% summarise(n = n())
+```
+
+Required by plink Binary ('0' = control, '1' = case)
+Required by plink Sex code ('1' = male, '2' = female, '0' = unknown)
+FID (Family ID) and IID (Individual ID) for it to correctly identify individuals
+mbQTL can not take non numerical covariates
+
+```{r}
+Samples538_covariates_2 = Samples538_covariates %>% 
+  dplyr::select(IID, ECC_status, Sex, Age, Urban_status, SEFI_score, PC1, PC2, PC3, PC4, PC5) %>%
+  # mutate(FID = IID) %>%
+  mutate(Sex = case_when( # AS Original in data 1, Female | 2, Male 
+    Sex == 0 ~ "Female",
+    Sex == 1 ~ "Male")) %>% 
+  mutate(Sex = case_when( # AS 	required by plink Sex code ('1' = male, '2' = female, '0' = unknown)
+    Sex == "Female" ~ 2,
+    Sex == "Male" ~ 1,
+    TRUE ~ 0 )) %>% 
+  dplyr::select(IID, ECC_status, Sex, Age, Urban_status, SEFI_score, PC1, PC2, PC3, PC4, PC5) %>%
+  column_to_rownames(var = "IID")
+
+Samples538_covariates_2 %>% head()
+
+Samples538_covariates_2_t = Samples538_covariates_2 %>%
+  as.matrix() %>% 
+  t() %>% 
+  as.data.frame()
+Samples538_covariates_2_t 
+```
+
+
+
+```{r}
+Samples538_LinearAnalysisTaxaSNP <- linearTaxaSnp(Maaslin2_16S_ITS_features_2,
+  Samples538_recoded_vcf_2,
+  Samples538_covariates_2_t
+)
+Samples538_LinearAnalysisTaxaSNP 
+
+```
+
+
+
+```{r}
+Samples538_LinearAnalysisTaxaSNP_2 = Samples538_LinearAnalysisTaxaSNP %>%
+  dplyr::select(Genus, snps, FDR, pvalue) %>%
+  mutate(P_BH_adj = as.numeric(FDR),
+         pvalue = as.numeric(pvalue)) %>%
+filter(P_BH_adj < 0.05) %>% 
+  mutate(nlog10P_BH_adj = -log10(P_BH_adj)) %>% 
+  select(-FDR)
+Samples538_LinearAnalysisTaxaSNP_2 
+```
+
+
+## Save as tsv
+```{r}
+# write.table(Samples538_LinearAnalysisTaxaSNP_2, 
+#            file = here("Samples538_B_MicrbiomeQTL/B3_mbQTL",
+#                        "B3_03_Samples538_mbQTL_sig_variant_sig_species.tsv"),
+#            quote = F, sep = "\t", row.names = F)
+
+```
+
+```{r}
+Samples538_LinearAnalysisTaxaSNP_spread = Samples538_LinearAnalysisTaxaSNP %>% # Samples538_LinearAnalysisTaxaSNP_2
+    mutate(pvalue = as.numeric(pvalue)) %>%
+  mutate(nlog10P = -log10(pvalue)) %>%
+  # filter(nlog10P > 3) %>%
+  dplyr::select(Genus, snps, nlog10P) %>%
+  tidyr::spread(key = snps, value = nlog10P) %>% 
+  # mutate_all(as.numeric) %>%
+  replace(is.na(.), 0)
+Samples538_LinearAnalysisTaxaSNP_spread %>% head()
+
+Samples538_LinearAnalysisTaxaSNP_gather = Samples538_LinearAnalysisTaxaSNP_spread %>%
+  gather(key = "snps", value = "nlog10P", -Genus) 
+Samples538_LinearAnalysisTaxaSNP_gather %>% head()
+
+Samples538_LinearAnalysisTaxaSNP_gather$Genus <- abbreviate(Samples538_LinearAnalysisTaxaSNP_gather$Genus, minlength = 35, use.classes = FALSE)
+Samples538_LinearAnalysisTaxaSNP_gather %>% head()
+```
+
+
+```{r}
+# Create the heatmap
+Samples538_LinearAnalysisTaxaSNP_heatmap <- 
+  ggplot(Samples538_LinearAnalysisTaxaSNP_gather,
+         aes(y = snps, x = Genus, fill = nlog10P)) +
+  geom_tile(color = "black") +
+  scale_fill_gradientn(colors = c("white", "yellow", "green", "darkgreen", "darkred"),
+                       limits = c(0, max(Samples538_LinearAnalysisTaxaSNP_gather$nlog10P, na.rm = TRUE))) +
+  # scale_x_discrete(limits = rev(levels(ld_long$Var1))) +  # Reverse x-axis order
+  scale_y_discrete(limits = rev(levels(Samples538_LinearAnalysisTaxaSNP_gather$snps)),
+                   position = "right") +  # Move y-axis labels to the right
+  
+  theme_minimal() +
+  theme(axis.text.x = element_text(size = 8, family = "Arial", color = "black",
+                                   angle = 60, hjust = 1, vjust = 1),
+        axis.text.y = element_text(size = 8, family = "Arial", color = "black"),
+        axis.title.x = element_text(size = 9, face = "bold"),
+        axis.title.y = element_text(size = 9, face = "bold"),
+        legend.position = "left",  # Move the legend to the left
+        legend.title = element_text(size = 8, face = "bold"),
+        legend.text = element_text(size = 8),
+        title = element_text(size = 10)) +
+  labs( y = "Genetic Variants", x = "Microbial Species",
+        title = "mbQTL_sig_variant_sig_species_dominant_model",
+        subtitle =  "P < 0.05")
+
+Samples538_LinearAnalysisTaxaSNP_heatmap
+ggsave(here("Samples538_B_MicrbiomeQTL/B3_mbQTL_dominant",
+            "B3_03_Samples538_mbQTL_sig_variant_sig_species.png"),
+       Samples538_LinearAnalysisTaxaSNP_heatmap,
+       width = 6,
+       height = 4,
+       dpi = 300)
+
+```
+
+

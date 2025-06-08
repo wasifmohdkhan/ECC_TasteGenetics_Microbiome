@@ -1,0 +1,2 @@
+The figure MediationR_results_Aim3.pdf is copied (through WinSCP) from the path below
+C:\Users\My HP 2024\OneDrive - University of Manitoba\Dr_Hu_Lab\Aim3_Taste_Genetics\Figures_Tables\MediationR_results_Aim3

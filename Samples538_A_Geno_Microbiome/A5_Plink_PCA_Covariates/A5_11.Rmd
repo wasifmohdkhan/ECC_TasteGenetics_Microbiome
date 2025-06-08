@@ -1,0 +1,171 @@
+---
+title: "LD map for common variants all models"
+output: html_document
+date: "2024-08-30"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+```{r}
+rm(list=ls())
+```
+
+```{r}
+library(here)
+library(tidyverse)
+library(snpStats)
+library(vcfR)
+
+
+```
+# create plink files
+
+
+```{bash}
+source /home/wasif_pclab/anaconda3/etc/profile.d/conda.sh
+
+conda activate Plink_env
+mkdir -p /media/Second_stor/wasif/WK_Rprojects/RP_240910_Taste_Genes_Analysis_2/Samples538_A_Geno_Microbiome/A5_Plink_PCA_Covariates/Plink_files
+cd       /media/Second_stor/wasif/WK_Rprojects/RP_240910_Taste_Genes_Analysis_2/Samples538_A_Geno_Microbiome/A5_Plink_PCA_Covariates/Plink_files
+
+metadata_dir=/media/Second_stor/wasif/WK_Rprojects/RP_230718_Taste_Genes_Analysis_1/Samples538_Analysis/Metadata538_files/
+inupt_dir=/media/Second_stor/wasif/WK_Rprojects/RP_230718_Taste_Genes_Analysis_1/Samples538_Analysis/Samples538_GATK/
+
+plink \
+--vcf ${inupt_dir}/Samples538_55genes_GenotypeGVCFs_SNPIDs_filtered_anno_IDcomplete5.vcf \
+--double-id \
+--make-bed \
+--keep-allele-order \
+--make-pheno ${metadata_dir}/Samples538_Combined_Phenotype.txt 1 \
+--update-sex ${metadata_dir}/Samples538_Combined_Phenotype_with_sex_info.txt \
+--recode \
+--dummy-coding 'no-round' \
+--covar ${metadata_dir}/Samples538_Combined_covariates.txt \
+--out ./Samples538_55gene_Plink
+```
+
+# make a txt file for tthe variants of interest
+```{r}
+# Load the data
+
+Sample538_Plink_model1_p_OR = readRDS(here("Samples538_A_Geno_Microbiome/A5_Plink_PCA_Covariates",
+                                   "A5_01_Plink_additive_model1_p_OR.rds") )
+Sample538_Plink_model1_p_OR
+
+Sample538_Plink_model1_p_OR_snps = Sample538_Plink_model1_p_OR %>% 
+  select(SNP)
+
+write.table(Sample538_Plink_model1_p_OR_snps,
+            file = here("Samples538_A_Geno_Microbiome/A5_Plink_PCA_Covariates",
+                                   "A5_01_Plink_additive_model1_p_OR_snps.txt"),
+            quote = FALSE, row.names = FALSE, col.names = FALSE)
+
+```
+
+
+## select variants of interest
+```{bash}
+source /home/wasif_pclab/anaconda3/etc/profile.d/conda.sh
+
+conda activate Plink_env
+
+Plink_folder=/media/Second_stor/wasif/WK_Rprojects/RP_240910_Taste_Genes_Analysis_2/Samples538_A_Geno_Microbiome/A5_Plink_PCA_Covariates/Plink_files
+cd ${Plink_folder}
+
+# Select the variants of interest
+plink \
+--bfile ./Samples538_55gene_Plink \
+--extract ../A5_01_Plink_additive_model1_p_OR_snps.txt \
+--make-bed \
+--out ./Samples538_55gene_Plink_sig_subset
+```
+
+
+```{bash}
+source /home/wasif_pclab/anaconda3/etc/profile.d/conda.sh
+
+conda activate Plink_env
+
+Plink_folder=/media/Second_stor/wasif/WK_Rprojects/RP_240910_Taste_Genes_Analysis_2/Samples538_A_Geno_Microbiome/A5_Plink_PCA_Covariates/Plink_files
+cd ${Plink_folder}
+# Calculate LD for the list of SNPs
+
+plink \
+--bfile ./Samples538_55gene_Plink_sig_subset \
+--r2 \
+--ld-window 99999 \
+--ld-window-r2 0.2 \
+--out ./Samples538_55gene_Plink_sig_subset_LD
+
+```
+### Load the Data into R
+
+```{r}
+# Load necessary libraries
+library(tidyverse)
+
+# Read the LD results file
+ld_data <- read.table(here("Samples538_A_Geno_Microbiome/A5_Plink_PCA_Covariates/Plink_files",
+                                   "Samples538_55gene_Plink_sig_subset_LD.ld"),
+                      header = TRUE)
+
+# Prepare the data for heatmap
+ld_matrix <- ld_data %>%
+  select(SNP_A, SNP_B, R2) %>%
+  spread(SNP_B, R2)
+
+# Ensure that the SNPs are ordered
+ld_matrix <- ld_matrix %>%
+  column_to_rownames("SNP_A") %>%
+  as.matrix()
+
+# Replace NA with 0 (optional)
+ld_matrix[is.na(ld_matrix)] <- 0
+
+```
+
+
+### Visualize the LD Heatmap
+
+```{r}
+# Convert the matrix to a long format for ggplot
+ld_long <- as.data.frame(as.table(ld_matrix)) #%>% 
+  # mutate( Var1 = gsub("chr\\d+_\\d+_", "", Var1),
+  #         Var2 = gsub("chr\\d+_\\d+_", "", Var2)
+  # )
+ld_long
+
+
+ggplot(ld_long, aes(Var1, Var2, fill = Freq)) +
+  geom_tile(color = "black") +
+  scale_fill_gradientn(colors = c("white", "yellow", "darkred")) +
+  scale_x_discrete(labels = function(Var1) gsub("chr\\d+_\\d+_", "", Var1)) +
+  scale_y_discrete(labels = function(Var2) gsub("chr\\d+_\\d+_", "", Var2)) +
+  # scale_y_discrete(limits = rev(levels(ld_long$Var2)), position = "right") +  # Move y-axis labels to the right
+  theme_minimal() +
+  theme(axis.text.x = element_text(size = 5, family = "Arial", color = "black",
+                                   angle = 45, hjust = 1, vjust = 1.15),
+        axis.text.y = element_text(size = 5, family = "Arial", color = "black"),
+        axis.title.x = element_text(size = 7, face = "bold"),
+        axis.title.y = element_text(size = 7, face = "bold"),
+        legend.position = "right",  # Move the legend to the left
+        legend.key.size = unit(0.35, "cm"),
+        legend.title = element_text(size = 8, face = "bold"),
+        legend.text = element_text(size = 6)) +
+  labs(x = "Genetic Variants",
+       y = "Genetic Variants",
+       fill = expression(LD ~ (r^2)))
+
+ggsave(here("Samples538_A_Geno_Microbiome/A5_Plink_PCA_Covariates",
+            "A5_11_LD_heatmap.jpg"),
+       width = 5, height = 3.75, dpi = 300)
+
+```
+
+
+
+
+

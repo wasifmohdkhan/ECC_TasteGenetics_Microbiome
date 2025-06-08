@@ -1,0 +1,13 @@
+When copying code from B1_mbQTL_additive, make following changes in the same order
+
+1. additive to dominant
+2. A1_01 to A1_02
+3. add this code
+   %>% 
+  # to make it a dominant vcf table
+  mutate(across(everything(), ~case_when(
+  . == 2 ~ 1,  # Replace 2 with 1
+  TRUE ~ .     # Keep all other values the same
+  )))
+  
+4. B1 to B3

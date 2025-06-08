@@ -1,0 +1,507 @@
+---
+title: "Plink with Age,Sex,PC1,PC2,PC3,PC4,PC5,SEFI_score,Urban_status dominant model"
+output: html_document
+date: "2024-08-20"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+#### Replacements
+
+add --dominant or --recessive in plink command
+replace additive with dominant/recessive one by one
+replace A1_02 accordingly
+replace ADD to DOM
+
+## R Markdown
+
+```{r}
+rm(list = ls())
+```
+
+
+```{r}
+filext = "A1_02_Samples538_55gene_logistic_dominant"
+out_dir = "A1_02_Plink_dominant"
+
+```
+
+
+# Load libraries
+
+```{r}
+library(tidyverse)
+library(here)
+library(snpStats)
+library(vcfR)
+library(mbQTL)
+library(RColorBrewer)
+library(qqman)
+```
+
+### plink logistic association and chi square test
+
+#### add --dominant or --recessive accordingly
+
+```{bash}
+
+source /home/wasif_pclab/anaconda3/etc/profile.d/conda.sh
+
+conda activate Plink_env
+
+mkdir -p /media/Second_stor/wasif/WK_Rprojects/RP_240910_Taste_Genes_Analysis_2/Samples538_A_Geno_Microbiome/A1_Plink/A1_02_Plink_dominant/
+cd /media/Second_stor/wasif/WK_Rprojects/RP_240910_Taste_Genes_Analysis_2/Samples538_A_Geno_Microbiome/A1_Plink/A1_02_Plink_dominant/
+
+metadata_dir=/media/Second_stor/wasif/WK_Rprojects/RP_230718_Taste_Genes_Analysis_1/Samples538_Analysis/Metadata538_files/
+
+plink \
+--bfile ../A1_00_Plink_files/Samples538_55gene_Plink \
+--geno 0.01 \
+--maf 0.01 \
+--hwe 0.00001 \
+--logistic \
+--dominant \
+--ci 0.95 \
+--covar ../A1_00_Plink_files/Samples538_Combined_covariates_PCA.txt \
+--covar-name Age,Sex,PC1,PC2,PC3,PC4,PC5,SEFI_score,Urban_status  \
+--make-pheno ${metadata_dir}/Samples538_Combined_Phenotype.txt 1 \
+--out ./Samples538_55gene_Plink_geno.01_maf.01_hwe.00001_logistic_dominant
+```
+
+## Read the df_chromPOS_to_gene_variant file
+
+```{r}
+df_chromPOS_to_gene_variant = read.table(here("Samples538_A_Geno_Microbiome/A1_Plink/",
+                 "Samples538_55gene_df_chromPOS_to_gene_variant.txt"),
+            header = T,
+            sep = "\t")
+
+df_chromPOS_to_gene_variant = df_chromPOS_to_gene_variant %>% 
+    mutate( POS = as.character(POS),
+         CHROM = as.character(CHROM))
+
+df_chromPOS_to_gene_variant %>% head()
+
+```
+
+
+```{r}
+chi_assoc_file = read.table(here("Samples538_A_Geno_Microbiome/A1_Plink/A1_00_Plink_files",
+                             "Samples538_55gene_Plink_geno.01_maf.01_hwe.00001_assoc.assoc"),
+                        header = T)
+chi_assoc_file = chi_assoc_file %>%
+  mutate( BP = as.character(BP),
+         CHR = as.character(CHR)) %>% 
+  dplyr::select(CHR, SNP, BP, A1, A2, F_A, F_U) 
+chi_assoc_file %>% head()
+```
+
+
+## Assign gene name to assoc file
+
+```{r}
+logit_assoc_file = read.table(here("Samples538_A_Geno_Microbiome/A1_Plink/A1_02_Plink_dominant",
+                             "Samples538_55gene_Plink_geno.01_maf.01_hwe.00001_logistic_dominant.assoc.logistic"),
+                        header = T)
+logit_assoc_file = logit_assoc_file %>%
+  mutate( BP = as.character(BP),
+         CHR = as.character(CHR)) %>% 
+  filter(TEST == "DOM") 
+logit_assoc_file %>% head()
+```
+
+
+
+## To select only those genes which are in bed file
+
+```{r}
+Gene55_names = read.table(here("../RP_230718_Taste_Genes_Analysis_1/References_Seqs/bed_files",
+                               "Gene55_names_only.txt"),
+                        header = F)
+Gene55_names
+```
+
+# merge assoc file with gene names and chi sqare results
+
+```{r}
+assoc_file_df_chromPOS_to_gene_variant =  inner_join(logit_assoc_file, df_chromPOS_to_gene_variant,
+                                             by = c("CHR" = "CHROM", "BP" = "POS")) %>% 
+  ## To add the information related to F_A and F_U
+  inner_join(., chi_assoc_file, by = c("CHR" = "CHR",
+                                    "BP" = "BP",
+                                    "SNP" = "SNP",
+                                    "A1" = "A1"
+                                    ))
+assoc_file_df_chromPOS_to_gene_variant %>% head()
+
+assoc_file_df_chromPOS_to_gene_variant_adjP = assoc_file_df_chromPOS_to_gene_variant %>% 
+  mutate(P_BH = p.adjust(P, method = "BH"),
+         P_Bonferroni = p.adjust(P, method = "bonferroni")  ) %>% 
+  arrange(P_BH, SNP) %>% 
+  mutate(BP= as.numeric(BP)) %>% 
+  # to filter only those genes which are in bed file
+  filter(Gene %in% Gene55_names$V1)
+assoc_file_df_chromPOS_to_gene_variant_adjP %>% head()
+
+```
+
+```{r}
+assoc_file_df_chromPOS_to_gene_variant_adjP_3 = assoc_file_df_chromPOS_to_gene_variant_adjP %>% 
+  # arrange(Gene) %>% 
+  mutate(Location_GRCh38 = paste0("chr", CHR, ":", BP),
+         Frq_ECC = F_A,
+         Frq_CF = F_U) %>% 
+  dplyr::select(Gene, SNP, Location_GRCh38, A1, A2,  STAT, P, OR,
+                P_Bonferroni, P_BH, Variant_Type,Variant_Effect,
+                Frq_ECC, Frq_CF, SE) %>% 
+  # extract SNP rsID
+  separate(SNP, into = c(NA, NA, NA, "SNP_rsID"), sep = "_+", remove = FALSE)
+assoc_file_df_chromPOS_to_gene_variant_adjP_3
+
+write.table(assoc_file_df_chromPOS_to_gene_variant_adjP_3, 
+            here("Samples538_A_Geno_Microbiome/A1_Plink/A1_02_Plink_dominant",
+                 paste0(filext,"_cov_anno.txt") ),
+            sep = "\t", quote = F, row.names = F)
+
+```
+
+## Load the file
+
+```{r}
+Samples538_Plink_logit_cov_w_anno = read.table(here("Samples538_A_Geno_Microbiome/A1_Plink/A1_02_Plink_dominant",
+                                                               paste0(filext,"_cov_anno.txt")),
+                                                          header = T)
+Samples538_Plink_logit_cov_w_anno %>% head()
+```
+
+# QQ plot
+
+```{r}
+# Assuming your dataframe is named 'Samples538_Plink_logit_cov_w_anno'
+# Extract the P-values
+p_values <- Samples538_Plink_logit_cov_w_anno$P
+
+# Create the Q-Q plot
+qq(p_values, main = "Q-Q Plot of GWAS P-values") #%>% 
+  # ggplotify::as.ggplot()
+
+```
+
+## ggplot
+
+```{r}
+ggplot_title = "Plot with logistic dominant model"
+ggplot_subtitle = "Plink geno.01_maf.01_hwe.00001"
+ggplot_caption = "Covariates: Age,Sex,PC1,PC2,PC3,PC4,PC5,SEFI_score,Urban_status"
+
+```
+
+## process data for plotting
+```{r}
+shape_mapping <- c(
+  "conservative_inframe_deletion" = 13,
+  "synonymous_variant"            = 17,
+  "missense_variant"              = 18,
+  "intron_variant"                = 16,
+  "frameshift_variant"            = 11,
+  "downstream_gene_variant"       = 9,
+  "Other"                         = 4
+)
+
+# Dynamically generate variant order from shape_mapping
+variant_order <- names(shape_mapping)
+
+# Process data for QQ plot and Volcano plot in one workflow
+Samples538_Plink_logit_cov_w_anno_processed <- Samples538_Plink_logit_cov_w_anno %>%
+  filter(!is.na(P)) %>%               # Remove rows with NA in P
+  arrange(P) %>%                      # Sort by P-values
+  mutate(
+    observed = -log10(P),             # Observed quantiles for QQ
+    expected = -log10(ppoints(n())),  # Expected quantiles for QQ
+    chi_sq = qchisq(1 - P, 1),        # Chi-squared values for λ calculation
+    log10p = -log10(P),               # -log10(P) for Volcano plot
+    logOR = log2(OR),                 # log2(OR) for Volcano plot
+    Significance_P_BH = ifelse(P_BH <= 0.05, "Significant", "Not Significant"), # Significance
+    Variant_Type_Labeled = factor(   # Labeled Variant_Type
+      ifelse(Variant_Type %in% names(shape_mapping), Variant_Type, "Other"),
+      levels = variant_order
+    )
+  )
+Samples538_Plink_logit_cov_w_anno_processed
+```
+
+
+## QQ plot in ggplot for the p-values
+
+```{r}
+# # Ensure no NA values in the P column and calculate QQ data and λ
+# qq_data <- Samples538_Plink_logit_cov_w_anno %>%
+#   filter(!is.na(P)) %>%  # Remove rows with NA in P column
+#   arrange(P) %>%         # Sort by P-values
+#   mutate(
+#     observed = -log10(P),                           # Observed quantiles
+#     expected = -log10(ppoints(n())),                # Expected quantiles
+#     chi_sq = qchisq(1 - P, 1)                       # Chi-squared values for λ calculation
+#   )
+# qq_data
+
+# Calculate genomic inflation factor (λ)
+lambda <- median(Samples538_Plink_logit_cov_w_anno_processed$chi_sq) / qchisq(0.5, 1)
+
+# Create the QQ plot
+qq_plot_ggplot <- ggplot(Samples538_Plink_logit_cov_w_anno_processed,
+                         aes(x = expected, y = observed)) +
+  geom_point(aes(color = Significance_P_BH), alpha = 0.8, size = 1) +
+  scale_color_manual(values = c("Not Significant" = "grey30", "Significant" = "red"),
+                     name = expression("Significance" ~ "\n(" * italic(q) * " < 0.05)")
+                     ) +
+  geom_abline(intercept = 0, slope = 1, color = "blue4", linetype = "dashed") +
+  annotate(
+    "text",
+    x = 1.5, y = 4,  # Position at the top of the plot
+    label = paste("λ =", round(lambda, 3)),
+    hjust = 1, vjust = 1,  # Adjust text alignment
+    size = 3  # Adjust text size
+  ) +
+  scale_x_continuous(
+    limits = c(0, 3.5),  # Set x-axis range
+    breaks = seq(0, 3, 1),  # Set x-axis ticks
+    expand = c(0, 0)  # Remove padding
+  ) +
+  scale_y_continuous(
+    limits = c(0, 4.5),  # Set y-axis range
+    breaks = seq(0, 4, 1),  # Set y-axis ticks
+    expand = c(0, 0)  # Remove padding
+  ) +
+  labs(x = expression("Expected -log10("*italic(p)*")"), 
+     y = expression("Observed -log10("*italic(p)*")"),
+       # title = "Q-Q Plot of GWAS P-values",
+       # subtitle = paste("Genomic inflation factor (λ) =", round(lambda, 3)),
+     # caption = ggplot_caption 
+       ) +
+  theme_bw() +
+  theme(
+    axis.text = element_text(size = 8, color = "black"),
+    axis.title = element_text(size = 9, color = "black"),
+    legend.text = element_text(size = 6),      # Reduce legend text size
+    legend.title = element_text(size = 7),   # Reduce legend title size
+    legend.key.size = unit(0.4, "cm"),        # Reduce size of legend keys
+    plot.title = element_text(color = "black"),
+    plot.subtitle = element_text(color = "black"),
+    plot.caption = element_text(color = "black"),
+    axis.ticks = element_blank(),  # Remove axis ticks
+    # Make the gridlines faint
+    panel.grid.major = element_line(color = "gray", linewidth = 0.05),  # Faint major gridlines
+    panel.grid.minor = element_line(color = "gray", linewidth = 0.02)   # Faint minor gridlines
+  ) 
+
+ggsave (here("Samples538_A_Geno_Microbiome/A1_Plink", out_dir,
+             paste0(filext,"_QQ_plot.png")),
+        qq_plot_ggplot,
+        width = 6, height = 6, dpi = 300)
+
+saveRDS(qq_plot_ggplot,
+        here("Samples538_A_Geno_Microbiome/A1_Plink", out_dir,
+              paste0(filext,"_QQ_plot.rds")))
+
+
+```
+
+## Use the data to make a volcano plot
+
+```{r}
+
+# # Assume assoc_file_df_chromPOS_to_gene_variant_adjP is your dataset
+# 
+# volcano_data <- Samples538_Plink_logit_cov_w_anno %>%
+#   mutate(
+#     log10p = -log10(P),
+#     logOR = log2(OR)
+#   ) %>%
+#   arrange(P) %>%
+#   filter(!is.na(log10p)) %>%
+#   mutate(
+#     Significance_P_BH = ifelse(P_BH <= 0.05, "Significant", "Not Significant")
+#   )
+
+# Define shapes and variant order combined into one step
+
+
+
+
+# # Create a new column in volcano_data to classify unspecified variants as "Other"
+# volcano_data <- volcano_data %>%
+#   mutate(
+#     Variant_Type_Labeled = factor(
+#       ifelse(Variant_Type %in% names(shape_mapping), Variant_Type, "Other"),
+#       levels = variant_order
+#     )
+#   )
+
+# Determine axis limits for symmetry, ensuring it includes your specified marks
+max_abs_logOR <- max(c(abs(Samples538_Plink_logit_cov_w_anno_processed$logOR), 4), na.rm = TRUE)
+
+# Create the plot with improved label placement using ggrepel
+volcano_plot <- ggplot(Samples538_Plink_logit_cov_w_anno_processed,
+                       aes(x = logOR, y = log10p)) +
+  geom_point(aes(color = Significance_P_BH, shape = Variant_Type_Labeled), alpha = 0.8) +
+  scale_shape_manual(values = shape_mapping) +
+  scale_color_manual(values = c("Not Significant" = "grey30", "Significant" = "red"),
+                     name <- expression("Significance" ~ "\n(" * italic(q) * " < 0.05)")
+                     ) +
+  labs(
+    x = "log(OR)",
+    y = expression("-log10("*italic(p)*")")
+  ) +
+  theme_bw() +
+  ggrepel::geom_label_repel(
+    data = filter(Samples538_Plink_logit_cov_w_anno_processed, Significance_P_BH == "Significant"),
+    aes(label = str_replace(SNP, "chr\\d+[_]+\\d+_", "")),
+    box.padding = 0.1,
+    point.padding = 0.1,
+    label.padding = 0.1,  
+    segment.color = 'black',
+    size = 2, # Adjust this value to change label size
+    color = 'red'
+  ) +
+  scale_x_continuous(
+    limits = c(-max_abs_logOR, max_abs_logOR),
+    breaks = c(-4, -2, 0, 2, 4),  # Set x-axis ticks
+    expand = c(0, 0)  # Remove padding
+  ) +
+  scale_y_continuous(
+    limits = c(0, 4.5),
+    breaks = 0:7,  # Set x-axis ticks
+    expand = c(0, 0)  # Remove padding
+  ) +
+  theme(
+    axis.text = element_text(size = 8, color = "black"),
+    axis.title = element_text(size = 9, color = "black"),
+    legend.text = element_text(size = 6),      # Reduce legend text size
+    legend.title = element_text(size = 7),   # Reduce legend title size
+    legend.key.size = unit(0.4, "cm"),        # Reduce size of legend keys
+    plot.title = element_text(color = "black"),
+    plot.subtitle = element_text(color = "black"),
+    plot.caption = element_text(color = "black"),
+    axis.ticks = element_blank(), # Remove axis ticks
+    # Make the gridlines faint
+    panel.grid.major = element_line(color = "gray", linewidth = 0.05),  # Faint major gridlines
+    panel.grid.minor = element_line(color = "gray", linewidth = 0.02)   # Faint minor gridlines
+  )
+
+# Display the updated plot
+volcano_plot
+
+
+# Save the plot
+ggsave(
+  here("Samples538_A_Geno_Microbiome/A1_Plink", out_dir,
+       paste0(filext, "_volcano_plot.png")),
+  plot   = volcano_plot,
+  width  = 9,
+  height = 7,
+  dpi    = 300
+)
+
+# save rds
+saveRDS(volcano_plot,
+        here("Samples538_A_Geno_Microbiome/A1_Plink", out_dir,
+              paste0(filext, "_volcano_plot.rds")))
+
+
+
+```
+
+## write the file with formatted values in a word table
+
+```{r}
+Samples538_Plink_logit_cov_w_anno %>% head()
+
+Samples538_Plink_logit_cov_w_anno = Samples538_Plink_logit_cov_w_anno %>% 
+   mutate(
+    OR = as.numeric(OR),  # Convert OR from character to numeric
+    lower_CI = exp(log(OR) - 1.96 * SE),
+    upper_CI = exp(log(OR) + 1.96 * SE)
+   )
+Samples538_Plink_logit_cov_w_anno
+
+sel_cols = c("Location_GRCh38", "Gene", "SNP_rsID", "A1", "A2", "Frq_ECC",
+             "Frq_CF", "OR", "SE", "P", "P_BH", "Variant_Type")
+
+Samples538_Plink_logit_cov_w_anno_2 = Samples538_Plink_logit_cov_w_anno %>% 
+  filter(P_BH < 0.05) %>% 
+    mutate(
+    OR = ifelse(OR < 0.001, "<0.001", formatC(OR, format = "f", digits = 3)),
+    Frq_ECC = ifelse(Frq_ECC < 0.001, "<0.001", formatC(Frq_ECC, format = "f", digits = 3)),
+    Frq_CF = ifelse(Frq_CF < 0.001, "<0.001", formatC(Frq_CF, format = "f", digits = 3)),
+    P = formatC(P, format = "e", digits = 2),
+    P_BH = formatC(P_BH, format = "e", digits = 2) 
+    ) %>% 
+  ## remove _ from the Variant_Type
+  mutate(Variant_Type = gsub("_", " ", Variant_Type)) %>%
+  dplyr::select(sel_cols)
+
+Samples538_Plink_logit_cov_w_anno_2 %>% 
+   mutate(
+    OR = as.numeric(OR),  # Convert OR from character to numeric
+    lower_CI = exp(log(OR) - 1.96 * SE),
+    upper_CI = exp(log(OR) + 1.96 * SE)
+   ) %>% 
+  print()
+
+  
+```
+
+```{r}
+
+# Order your data frame by GENE
+Samples538_Plink_logit_cov_w_anno_3 <- Samples538_Plink_logit_cov_w_anno_2 %>%
+ group_by(Gene) %>%
+  mutate(min_P = min(as.numeric(P), na.rm = TRUE)) %>%  # Calculate the minimum P-value for each gene
+  arrange(min_P, Gene) %>%  # Arrange by minimum P-value first, then by gene
+  ungroup() %>%  # Ungroup the data if needed
+  select(-min_P)  # Remove the temporary min_P column if you don't need it
+Samples538_Plink_logit_cov_w_anno_3
+
+# Define the width of each column with explicit column names
+column_widths <- c(
+  Location_GRCh38 = 1.2,
+  Gene = 0.8,
+  SNP_rsID = 1,
+  A1 = 0.5,
+  A2 = 0.6,
+  Frq_ECC = 0.7,
+  Frq_CF = 0.7,
+  OR = 0.6,
+  SE = 0.7,
+  P = 0.9,
+  P_BH = 0.9,
+  Variant_Type = 1.5
+)
+
+# Create the flextable
+ft <- flextable::regulartable(Samples538_Plink_logit_cov_w_anno_3) %>% 
+  flextable::width(j = names(column_widths), width = column_widths, unit = "in")
+
+# Rest of your code remains the same
+last_occurrence <- !duplicated(Samples538_Plink_logit_cov_w_anno_3$Gene, fromLast = TRUE)
+ft <- flextable::border(ft, part = "body", border.bottom = officer::fp_border(color = "black"), i = which(last_occurrence))
+
+ft <- flextable::fontsize(ft, size = 8, part = "all")
+ft <- flextable::merge_v(ft, j = "Gene")
+
+# Add the FlexTable to a Word document in landscape orientation
+doc <- officer::read_docx() %>%
+  flextable::body_add_flextable(value = ft, split = TRUE) %>%
+  officer::body_end_section_landscape()
+
+# Save the Word document
+print(doc,
+      target = here("Samples538_A_Geno_Microbiome/A1_Plink", out_dir,
+                    paste0(filext, "_Variant_Table.docx"))
+)
+
+```

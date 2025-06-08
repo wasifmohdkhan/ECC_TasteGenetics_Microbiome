@@ -1,0 +1,62 @@
+---
+title: "Untitled"
+output: html_document
+date: "2025-03-10"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+```{r}
+# Load necessary libraries
+library(ggplot2)
+library(cowplot)
+library(here)
+```
+
+
+```{r}
+# Read the saved RDS plots
+plot1 <- readRDS(here("Samples538_D_ML/D1_RF", 
+                       paste0("D1_01_16S_ITS", "ext_datasets_AUROC_AUPRC_Comparison_RF_plot.rds")))
+plot2 <- readRDS(here("Samples538_D_ML/D3_Test_ext_data_BC", "D3_03_MRS_Performance.rds"))
+```
+
+
+```{r}
+# Apply formatting to plot1
+plot1 <- plot1 + 
+  theme(
+  axis.text = element_text(size = 6.5),
+  axis.title = element_text(size = 7),
+  panel.grid.minor = element_blank(),
+  panel.grid.major = element_line(size = 0.2, color = "gray90")
+)
+
+# Apply formatting to plot2
+plot2 <- plot2 + 
+  theme(
+  axis.text = element_text(size = 6.5),
+  axis.title = element_text(size = 7),
+  panel.grid.minor = element_blank(),
+  panel.grid.major = element_line(size = 0.2, color = "gray90")
+)
+```
+
+
+```{r}
+# Combine plots using cowplot in two columns
+combined_plot <- plot_grid(plot1, plot2, labels = c("A", "B"), ncol = 2, align = "hv")
+
+# Display the combined plot
+print(combined_plot)
+
+# Save the final combined plot
+ggsave(here("Samples538_D_ML/D9_Combined_plots", "D9_02_combined_plot.jpg"),
+       combined_plot,
+       width = 6.5, height = 3, dpi = 300)
+
+```
+

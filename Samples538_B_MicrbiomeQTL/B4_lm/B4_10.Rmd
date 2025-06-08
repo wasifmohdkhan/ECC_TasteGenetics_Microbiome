@@ -1,0 +1,118 @@
+---
+title: "Untitled"
+output: html_document
+date: "2025-02-20"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+```{r}
+# rm(list = ls())
+```
+
+```{r}
+library(here)
+library(patchwork)
+library(cowplot)
+library(ggplot2)
+```
+
+
+```{r}
+# Adjust the paths as necessary based on where your R project is located
+Genus_combined <-  readRDS(here("Samples538_B_MicrbiomeQTL/B4_lm",
+             "B4_01_Genus_sig_variant_all_OTU_Heatmap_Forest.rds"))
+Species_combined <- readRDS(here("Samples538_B_MicrbiomeQTL/B4_lm",
+             "B4_01_Species_sig_variant_all_OTU_Heatmap_Forest.rds"))
+```
+```{r}
+# Remove x-axis elements from the top (Genus) plot only
+Genus_combined_clean <- Genus_combined +
+  theme(axis.title.x = element_blank(),
+        axis.text.x  = element_blank(),
+        axis.ticks.x = element_blank())
+
+```
+
+```{r}
+# Remove x-axis elements from the top plot (Genus_combined)
+Genus_combined_clean <- Genus_combined +
+  theme(axis.title.x = element_blank(),
+        axis.text.x  = element_blank(),
+        axis.ticks.x = element_blank())
+
+# Optionally, set a common margin for both plots so they align better
+common_margin <- theme(plot.margin = margin(t = 5, r = 5, b = 5, l = 5))
+Genus_combined_clean <- Genus_combined_clean + common_margin
+Species_combined_clean <- Species_combined + common_margin
+
+# Combine vertically with patchwork, adding overall labels "A" and "B"
+final_combined_plot <-  
+  Genus_combined_clean / 
+  Species_combined_clean + 
+  plot_layout(heights = c(1, 2.5), guides = "collect") &
+  theme(
+    legend.position = "bottom",                # keep the legend at the bottom
+    legend.key.size = unit(0.4, "cm"),         # make the legend key smaller
+    legend.justification = c(-0.1, 0.5),         # nudges the legend slightly left
+    plot.tag = element_text(size = 8, face = "bold")
+  )
+
+# Use cowplot to add a text box
+final_combined_plot <- ggdraw(final_combined_plot) +
+  draw_label("Favors CF         Favors ECC", x = 0.84, y = 0.28, color =  "black", size = 6, 
+             hjust = 0.5, vjust = 1)
+
+final_combined_plot
+
+
+# Save the final combined plot using the calculated height
+ggsave(filename = here("Samples538_B_MicrbiomeQTL/B4_lm", 
+                         paste0("B4_10", "_Species_Genus_Combined.jpg")),
+       plot = final_combined_plot,
+       width = 4.5,             # fixed width since columns are the same
+       height = 5.5,  # dynamically calculated height
+       units = "in")
+
+```
+```{r}
+# Load necessary libraries
+library(cowplot)
+library(here)
+library(ggplot2)
+
+# Load the heatmaps from RDS files
+variant_otu_heatmap_1 <- readRDS(here("Samples538_B_MicrbiomeQTL/B4_lm", 
+                                      paste0("B4_03_top_variant_all_OTU_ECC",
+                                             "_Heatmap_Mediation.rds")))
+
+variant_otu_heatmap_2 <- readRDS(here("Samples538_B_MicrbiomeQTL/B4_lm", 
+                                      paste0("B4_04_top_variant_all_OTU_CF",
+                                             "_Heatmap_Mediation.rds")))
+
+# Combine the two heatmaps side by side using cowplot and automatically label them
+combined_heatmap <- plot_grid(variant_otu_heatmap_1, 
+                              variant_otu_heatmap_2, 
+                              ncol = 2,
+                              labels = c("A", "B"),      # Automatically add labels "A" and "B"
+                              label_size = 10,           # Set the size of the labels
+                              label_fontface = "bold"    # Set the font to bold
+)
+
+# Display the combined heatmap
+print(combined_heatmap)
+
+# Save the combined heatmap as a jpg file
+ggsave(filename = here("Samples538_B_MicrbiomeQTL/B4_lm", 
+                         paste0("B4_10", "_Species_stratified.jpg")),
+       plot = combined_heatmap,
+       width = 6.5,             # fixed width since columns are the same
+       height = 4.2,            # dynamically calculated height
+       units = "in"
+)
+
+```
+

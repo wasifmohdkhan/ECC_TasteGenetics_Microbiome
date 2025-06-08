@@ -1,0 +1,108 @@
+---
+title: "combined_plot_shannon_Bray_16S_ITS_SODH"
+output: html_document
+date: "2024-02-15"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+```{r}
+rm(list = ls())
+```
+
+```{r}
+library(here)
+library(patchwork)
+library(cowplot)
+
+library(ggplot2)
+```
+
+
+```{r}
+# Adjust the paths as necessary based on where your R project is located
+plot1_path <- here("Samples538_B_MicrbiomeQTL/B5_Diversity",
+             "B5_01_Plaque538_16S_Species_Shannon_Diversity.rds")
+plot2_path <- here("Samples538_B_MicrbiomeQTL/B5_Diversity",
+             "B5_02_Plaque538_ITS_Species_Shannon_Diversity.rds")
+plot3_path <- here("Samples538_B_MicrbiomeQTL/B5_Diversity",
+             "B5_03_Plaque538_16S_Species_Bray_Diversity.rds")
+plot4_path <- here("Samples538_B_MicrbiomeQTL/B5_Diversity",
+             "B5_04_Plaque538_ITS_Species_Bray_Diversity.rds")
+
+# Load the plots
+plot1 <- readRDS(plot1_path)
+plot2 <- readRDS(plot2_path)
+plot3 <- readRDS(plot3_path)
+plot4 <- readRDS(plot4_path) # Make sure this corresponds to your actual fourth plot
+
+```
+
+
+```{r, warning=FALSE}
+# 1) Extract the legend from the third plot
+# legend3 <- cowplot::get_legend(plot3)
+legend3 = cowplot::get_plot_component(plot3,
+                            "guide-box", return_all = TRUE)[[3]]
+```
+
+```{r}
+# 1) Remove legend from plot1, plot2, plot4, keep legend in plot3
+plot1_noleg <- plot1 + theme(legend.position = "none")
+plot2_noleg <- plot2 + theme(legend.position = "none")
+plot3_noleg <- plot3 + theme(legend.position = "none")
+plot4_noleg <- plot4 + theme(legend.position = "none")
+```
+
+
+```{r}
+# 3) Combine plots 1 & 2, and then 3 & 4, as before (no legend in any of them)
+combined_12 <- plot1_noleg + plot2_noleg + 
+  patchwork::plot_layout(axes = "collect")
+combined_34 <- plot3_noleg + plot4_noleg + 
+  patchwork::plot_layout(axes = "collect")
+
+
+
+```
+
+```{r}
+
+# # 4) Put them together in two rows, then add the legend row without any tag
+# top_plots <- wrap_elements(combined_12) / wrap_elements(combined_34)
+# 
+# # 5) Annotate only the top portion with tags
+# top_annotated <- top_plots + plot_annotation(tag_levels = "A")
+
+# Combine the plots (without the legend)
+top_annotated <- plot_grid(combined_12, combined_34,
+                               labels = c("A", "B"),
+                               label_size = 10,
+                               # label_y = 1.05,
+                              # label_x = -0.02,
+                               nrow = 2)
+
+
+# 6) Place the legend row below, with no tag assigned
+combined_plot_shannon_Bray_16S_ITS <- plot_grid(
+  top_annotated,
+  legend3,
+  ncol = 1,
+  label_size = 10,
+  rel_heights = c(2, 0.1)  # Adjust as needed for better legend spacing
+)
+
+# Render the plot
+print(combined_plot_shannon_Bray_16S_ITS) 
+
+# Save the combined plot to a file, if needed
+ggsave(here("/media/Second_stor/wasif/WK_Rprojects/RP_240910_Taste_Genes_Analysis_2/Samples538_B_MicrbiomeQTL/B5_Diversity",
+             "combined_plot_shannon_Bray_16S_ITS.jpg"),
+       combined_plot_shannon_Bray_16S_ITS,
+       width = 6.5, height =4, dpi = 600)
+# Save the combined plot to a file, if needed
+```
+

@@ -1,0 +1,108 @@
+---
+title: "Untitled"
+output: html_document
+date: "2025-02-26"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+```{r}
+library(ggplot2)
+library(cowplot)
+library(here)
+```
+
+
+```{r}
+# Load the first two plots
+plot1 <- readRDS(here("Samples538_D_ML/D1_RF/D1_05_auroc_auprc_values_Combined_2_ggplot.rds"))
+plot2 <- readRDS(here("Samples538_D_ML/D1_RF/D1_05_Covariates_variants_16S_ITS_VIP_RF_ggplot.rds"))
+
+# Load the next two plots (renaming as per new order)
+plot3 <- readRDS(here("Samples538_D_ML/D3_Test_ext_data_BC",
+                       paste0("D3_02_16S", "_ext_datasets_arroc_auprc_results_RF.rds")))
+plot4 <- readRDS(here("Samples538_D_ML/D3_Test_ext_data_BC",
+                      "D3_03_MRS_Performance_sPLSDA.rds"))
+```
+
+
+```{r}
+# Apply formatting to plot1
+plot1 <- plot1 + 
+  theme(
+  axis.text = element_text(size = 6.5),
+  axis.title = element_text(size = 7),
+  panel.grid.minor = element_blank(),
+  panel.grid.major = element_line(size = 0.2, color = "gray90")
+)
+
+# Apply formatting to plot2
+plot2 <- plot2 + 
+  theme(
+  axis.text = element_text(size = 6.5),
+  axis.title = element_text(size = 7),
+  panel.grid.minor = element_blank(),
+  panel.grid.major = element_line(size = 0.2, color = "gray90")
+)
+
+# Apply formatting to plot3
+plot3 <- plot3 + 
+  theme(plot.margin = unit(c(0.3, 0.7, 0.2, 0.2), "cm")) +
+  theme(
+  axis.text = element_text(size = 6.5),
+  axis.title = element_text(size = 7),
+  panel.grid.minor = element_blank(),
+  panel.grid.major = element_line(size = 0.2, color = "gray90")
+)
+
+# Apply formatting to plot4
+plot4 <- plot4 + 
+  theme(plot.margin = unit(c(0.3, 0.3, 0.2, 0.8), "cm")) + # Adds left margin
+  theme(
+  axis.text = element_text(size = 6.5),
+  axis.title = element_text(size = 7),
+  panel.grid.minor = element_blank(),
+  panel.grid.major = element_line(size = 0.2, color = "gray90")
+)
+```
+
+
+```{r}
+# Create an empty plot (true white space)
+empty_space <- ggplot() + theme_void()
+
+# Combine Plot 1 and Plot 2 with a true white gap
+plot1_2 <- plot_grid(
+  plot1, empty_space, plot2,  # Insert empty white space between A and B
+  ncol = 3,
+  labels = c("A", "", "B"),  # Label only Plot A and Plot B
+  label_size = 8,
+  rel_widths = c(1, 0.1, 1)  # Increase 0.1 for a wider gap if needed
+)
+
+# Combine Plot 3 and Plot 4
+plot3_4 <- plot_grid(
+  plot3, plot4, 
+  ncol = 2, 
+  labels = c("C", "D"), 
+  label_size = 8
+)
+
+# Arrange both combined plots vertically
+final_combined_plot <- plot_grid(
+  plot1_2, plot3_4, 
+  ncol = 1, rel_heights = c(1.2, 1)
+)
+
+# Save the final combined plot
+ggsave(here("Samples538_D_ML/D9_Combined_plots", "D9_01_combined_plot.jpg"),
+       final_combined_plot,
+       width = 6.5, height = 5, dpi = 300)
+
+
+```
+

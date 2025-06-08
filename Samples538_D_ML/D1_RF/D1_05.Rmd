@@ -1,0 +1,152 @@
+---
+title: "box plot for AUROC and AUPRC data"
+output: html_document
+date: "2024-01-04"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+```{r}
+rm(list = ls())
+```
+
+# Libraries
+```{r}
+library(here)
+library(tidyverse)
+library(patchwork)
+```
+
+
+
+```{r}
+auroc_auprc_values_16S_ITS =  readRDS(here("Samples538_D_ML/D1_RF/D1_01_16S_ITS_auroc_auprc_values.rds"))
+auroc_auprc_values_Variants=  readRDS(here("Samples538_D_ML/D1_RF/D1_02_Variants_auroc_auprc_values.rds"))
+auroc_auprc_values_Covariates =  readRDS(here("Samples538_D_ML/D1_RF/D1_03_Covariates_auroc_auprc_values.rds"))
+auroc_auprc_values_Covariates_variants_16S_ITS =  readRDS(here("Samples538_D_ML/D1_RF/D1_04_Covariates_variants_16S_ITS_auroc_auprc_values.rds"))
+```
+
+```{r}
+auroc_auprc_values_16S_ITS_2 = auroc_auprc_values_16S_ITS %>% 
+  mutate(Dataset_type = "Microbiome")
+
+auroc_auprc_values_Variants_2 = auroc_auprc_values_Variants %>% 
+  mutate(Dataset_type = "Variants")
+
+auroc_auprc_values_Covariates_2 = auroc_auprc_values_Covariates %>% 
+  mutate(Dataset_type = "Covariates")
+
+auroc_auprc_values_Covariates_variants_16S_ITS_2 = auroc_auprc_values_Covariates_variants_16S_ITS %>% 
+  mutate(Dataset_type = "All_3_datasets")
+```
+
+
+# combine data
+```{r}
+auroc_auprc_values_Combined = rbind(auroc_auprc_values_16S_ITS_2,
+                                            auroc_auprc_values_Variants_2,
+                                            auroc_auprc_values_Covariates_2,
+                                            auroc_auprc_values_Covariates_variants_16S_ITS_2)
+auroc_auprc_values_Combined
+
+auroc_auprc_values_Combined_2 =  auroc_auprc_values_Combined %>% 
+  pivot_longer(cols = c(AUROC, AUPRC), 
+  names_to = "Metric", 
+  values_to = "Value") %>% 
+  mutate(Dataset_type = factor(Dataset_type, levels = unique(Dataset_type))) %>% 
+  mutate(Metric = factor(Metric, levels = unique(Metric)))
+auroc_auprc_values_Combined_2
+
+```
+
+```{r}
+library(ggplot2)
+
+auroc_auprc_values_Combined_2_ggplot = 
+ggplot(auroc_auprc_values_Combined_2, aes(x = model_id, y = Value, fill = Dataset_type)) +
+  geom_bar(stat = "identity", position = position_dodge(), alpha = 0.9) +
+  facet_wrap(~ Metric, scales = "free_y") +
+  scale_fill_manual(values = c("mediumpurple4", "orange4", "royalblue4", "#1A242F")) +
+  coord_cartesian(ylim = c(0.5, 1)) +  # Adjust y-axis limits with coord_cartesian
+  labs(x = "Classification Model", y = "Value", title = "Comparison of AUROC and AUPRC Values for 16S, ITS, and Combined data") +
+  theme_bw(base_family = "Arial") +
+  theme( text = element_text(color = "black"),
+    axis.text = element_text( size = 6, color = "black"),
+    axis.title = element_text(size = 6, color = "black", face = "bold"),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    # axis.title.y = element_blank(), # Hide the y-axis title
+    axis.ticks.y = element_blank(), # Hide y-axis ticks
+    axis.ticks.x = element_blank(), # Hide x-axis ticks if desired
+    # panel.grid.major = element_blank(), # Remove major grid lines
+    # panel.grid.minor = element_blank(), # Remove minor grid lines
+    panel.background = element_blank(), # Remove panel background
+    legend.title = element_text(size = 6, color = "black"),
+    legend.text = element_text(size = 6, color = "black"),
+    legend.key.size = unit(0.2, "cm"),
+    plot.title = element_blank(),
+    legend.position = "top",
+    strip.text = element_text(size = 6, color = "black"),
+    
+    panel.grid.minor = element_blank(),
+  panel.grid.major = element_line(size = 0.1, color = "gray90")
+  )
+auroc_auprc_values_Combined_2_ggplot
+
+saveRDS(auroc_auprc_values_Combined_2_ggplot, here("Samples538_D_ML/D1_RF/D1_05_auroc_auprc_values_Combined_2_ggplot.rds"))
+```
+
+
+# combine with the vip plot
+
+```{r}
+VIP_df_RF = readRDS(here("Samples538_D_ML/D1_RF/D1_04_Covariates_variants_16S_ITS_VIP_RF.rds"))
+
+VIP_df_RF_ggplot <- ggplot(VIP_df_RF, aes(y = Variable, x = Relative_importance)) +
+  geom_bar(stat = "identity", fill = "#1A242F", alpha = 0.8, width = 0.7, color = "#1A242F") +
+  labs(x = "Relative Variable Importance", y = "All Features", title = "Variable_importance") +
+  scale_y_discrete(labels = function(labels) {
+  labels <- str_replace(labels, "chr\\d+[_]+\\d+_", "")  # Remove pattern
+  abbreviate(labels, minlength = 40)  # Apply abbreviation
+}) +
+  theme_bw(base_family = "Arial") +
+  theme(
+    # Set global text color and apply it to all elements
+    text = element_text(color = "black"), 
+    
+    # Specific adjustments
+    axis.text = element_text(size = 6, color = "black"),  # Axis text
+    axis.title = element_text(size = 6, , color = "black", face = "bold"),  # Axis titles
+    axis.ticks.y = element_blank(),  # Hide y-axis ticks
+    axis.ticks.x = element_blank(),  # Hide x-axis ticks
+    panel.background = element_blank(),  # Remove panel background
+    
+    # Facet titles
+    strip.text = element_text(size = 8, color = "black"),  
+    
+    # Legend settings
+    legend.title = element_text(size = 8, color = "black"),
+    legend.text = element_text(size = 7, color = "black"),
+    
+    # Other settings
+    plot.title = element_blank(),
+    legend.position = "bottom",
+    
+    panel.grid.minor = element_blank(),
+  panel.grid.major = element_line(size = 0.1, color = "gray90")
+  )
+
+
+VIP_df_RF_ggplot
+
+saveRDS(VIP_df_RF_ggplot,
+        here("Samples538_D_ML/D1_RF/D1_05_Covariates_variants_16S_ITS_VIP_RF_ggplot.rds"))
+```
+
+
+
+
+
+

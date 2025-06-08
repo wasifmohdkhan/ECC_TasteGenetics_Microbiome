@@ -1,0 +1,83 @@
+---
+title: "Untitled"
+output: html_document
+date: "2025-02-25"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+```{r}
+# rm(list=ls())
+```
+
+# Libraries
+```{r}
+library(tidyverse)
+library(here)
+library(cowplot)
+library(pdftools)   # To convert PDF to PNG
+library(magick)     # To read PNG images
+
+```
+
+
+## Read files
+```{r}
+
+# improt rds image
+
+# Read the RDS file and extract the ggplot object
+plot1 <- readRDS(here("Samples538_C_Mediation/C2_MediationR",
+                  "C2_02_sig_variant_all_OTU_Heatmap_Mediation.rds"))
+plot1 = plot1 + theme(axis.title.y = element_text(margin = margin(r = 10)))
+plot1
+```
+
+```{r}
+# import rds image
+plot2 <- readRDS(here("Samples538_C_Mediation/C1_LDM",
+                  "C1_03_sig_variant_sig_OTU.rds"))
+plot2 = plot2 + theme(axis.title.y = element_text(margin = margin(r = 10)))
+plot2
+```
+```{r}
+# Specify the PDF file path for the third plot
+pdf_file <- here("Samples538_C_Mediation/C2_MediationR",
+                 "MediationR_results_Aim3.pdf")
+img_pdf <- image_read_pdf(pdf_file, density = 300)
+
+# Convert the magick image to a raster object for cowplot
+raster_pdf <- as.raster(img_pdf)
+
+# Create a ggdraw object to display the image
+plot3 <- ggdraw() +
+  draw_image(raster_pdf) +
+  # increase the margings
+  theme(plot.margin = margin(3, 3, 3, 3, "mm"))
+plot3
+```
+```{r}
+# Stack the second and third plots vertically (right column)
+right_panel <- plot_grid(plot2, plot3, ncol = 1, rel_heights = c(1.5, 1),
+                         labels = c("B", "C"),       # Labels for the individual subplots
+                         label_size = 8)
+
+# Combine plot1 (left half) and the right_panel (right half) side by side
+combined_plot <- plot_grid(plot1, right_panel, ncol = 2, rel_widths = c(1, 1),
+                           labels = c("A", ""),
+                           label_size = 8 )
+
+# Display the final combined plot
+combined_plot
+
+ggsave(here("Samples538_C_Mediation/C9_Combined_Plots",
+            "C9_01_Mediation_combined.jpg"),
+       combined_plot,
+       dpi = 300,
+       width = 6.5,
+       height = 5.5)
+```
+

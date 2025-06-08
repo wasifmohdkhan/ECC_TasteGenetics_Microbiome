@@ -1,0 +1,41 @@
+---
+title: "import files from other repository"
+output: html_document
+date: "2024-12-04"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+```{r}
+rm(list=ls())
+
+```
+
+## Libraries
+```{r}
+library(tidyverse)
+library(here)
+```
+
+## 16S
+```{r}
+file.copy(from = here("../RP_240306_Plaque538_samples/Plaque538_Combined/Plaque538_16S/Plaque538_16S_A2_pseq_objects",
+                          "Plaque538_16S_AllOTU_5perc_ps_17_vars_240306.Rds"),
+          to =   here("Samples538_A_Geno_Microbiome/A2_Maaslin/Microbiome538_files",
+                    "Plaque538_16S_AllOTU_5perc_ps_17_vars_240306.Rds")
+          )
+```
+## ITS
+```{r}
+file.copy(from = here("../RP_240306_Plaque538_samples/Plaque538_Combined/Plaque538_ITS/Plaque538_ITS_A2_pseq_objects",
+                          "Plaque538_ITS_AllOTU_5perc_ps_17_vars_240306.Rds"),
+          to =   here("Samples538_A_Geno_Microbiome/A2_Maaslin/Microbiome538_files",
+                    "Plaque538_ITS_AllOTU_5perc_ps_17_vars_240306.Rds")
+          )
+```
+
+
+

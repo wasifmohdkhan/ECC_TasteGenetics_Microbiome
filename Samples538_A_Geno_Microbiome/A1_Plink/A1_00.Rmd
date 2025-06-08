@@ -1,0 +1,358 @@
+ ---
+title: "Common outputs, Plink for PCA eigenvalues and chi-square test"
+output: html_document
+date: "2024-10-03"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+```{r}
+rm(list = ls())
+```
+
+
+
+
+
+# Load libraries
+
+```{r}
+library(tidyverse)
+library(here)
+library(snpStats)
+library(vcfR)
+library(mbQTL)
+library(RColorBrewer)
+library(qqman)
+```
+
+# create plink files
+
+```{bash}
+source /home/wasif_pclab/anaconda3/etc/profile.d/conda.sh
+
+conda activate Plink_env
+new_Plink_dir=/media/Second_stor/wasif/WK_Rprojects/RP_240910_Taste_Genes_Analysis_2/Samples538_A_Geno_Microbiome/A1_Plink/A1_00_Plink_files/
+rm -rf  $new_Plink_dir
+mkdir   $new_Plink_dir
+cd      $new_Plink_dir
+
+metadata_dir=/media/Second_stor/wasif/WK_Rprojects/RP_230718_Taste_Genes_Analysis_1/Samples538_Analysis/Metadata538_files/
+inupt_dir=/media/Second_stor/wasif/WK_Rprojects/RP_230718_Taste_Genes_Analysis_1/Samples538_Analysis/Samples538_GATK/
+
+plink \
+--vcf ${inupt_dir}/Samples538_55genes_GenotypeGVCFs_SNPIDs_filtered_anno_IDcomplete5.vcf \
+--double-id \
+--make-bed \
+--keep-allele-order \
+--make-pheno ${metadata_dir}/Samples538_Combined_Phenotype.txt 1 \
+--update-sex ${metadata_dir}/Samples538_Combined_Phenotype_with_sex_info.txt \
+--recode \
+--dummy-coding 'no-round' \
+--covar ${metadata_dir}/Samples538_Combined_covariates.txt \
+--out ./Samples538_55gene_Plink
+```
+
+# Plink recode vcf
+
+```{bash}
+source /home/wasif_pclab/anaconda3/etc/profile.d/conda.sh
+
+conda activate Plink_env
+
+cd       /media/Second_stor/wasif/WK_Rprojects/RP_240910_Taste_Genes_Analysis_2/Samples538_A_Geno_Microbiome/A1_Plink/A1_00_Plink_files/
+
+plink --file ./Samples538_55gene_Plink \
+--recode A \
+--keep-allele-order \
+--out ./Samples538_55gene_Plink.vcf
+
+## remove the alt allele tag from the snpid that is automatically added by recode A
+
+awk 'NR==1 {  # Process the header (first row)
+    for (i=1; i<=NF; i++) {
+        if ($i ~ /^chr/) {  # Check if the column name starts with "chr"
+            sub(/_[^_]*$/, "", $i)  # Remove last "_" and everything after
+        }
+    }
+    print  # Print the modified header
+    next  # Skip to the next line
+} 
+{ print }  # Print the rest of the file unchanged
+' ./Samples538_55gene_Plink.vcf.raw > ./Samples538_55gene_Plink.vcf.2.raw
+```
+
+## remove the alt allele tag from the snpid that is automatically added by recode A
+
+```{bash} 
+
+```{bash}
+<!-- source /home/wasif_pclab/anaconda3/etc/profile.d/conda.sh -->
+
+<!-- conda activate Plink_env -->
+
+<!-- cd       /media/Second_stor/wasif/WK_Rprojects/RP_240910_Taste_Genes_Analysis_2/Samples538_A_Geno_Microbiome/A1_Plink/A1_00_Plink_files/ -->
+
+<!-- plink --file ./Samples538_55gene_Plink \ -->
+<!-- --recode A \ -->
+<!-- --dominant \ -->
+<!-- --out ./Samples538_55gene_Plink_dominant.vcf -->
+# does not work as expected, the output file still has 0, 1, and 2
+```
+
+
+### Generate the PCA components:
+
+```{bash}
+source /home/wasif_pclab/anaconda3/etc/profile.d/conda.sh
+
+conda activate Plink_env
+cd /media/Second_stor/wasif/WK_Rprojects/RP_240910_Taste_Genes_Analysis_2/Samples538_A_Geno_Microbiome/A1_Plink/A1_00_Plink_files/
+plink \
+--bfile ./Samples538_55gene_Plink \
+--geno 0.01 \
+--mind 0.5 \
+--maf 0.01 \
+--hwe 0.00001 \
+--pca 5 \
+--out ./Samples538_55gene_Plink_PCA
+
+## PCs can not be calculated without mind option
+```
+
+```{r}
+# # Load eigenvalues from the file
+# eigenvalues <- read.table(here("Samples538_A_Geno_Microbiome/A1_Plink/A1_00_Plink_files/",
+#                                "Samples538_55gene_Plink_PCA.eigenval"),
+#                           header = FALSE, as.is = TRUE)$V1
+# 
+# # Create a tibble for plotting
+# eigen_df <- tibble(
+#   Principal_Component = paste0("PC", 1:length(eigenvalues)),
+#   Eigenvalue = eigenvalues
+# )
+# 
+# # Create the scree plot
+# # Create the scree plot with bars, points, lines, and custom y-axis limits
+# ggplot(eigen_df, aes(x = Principal_Component, y = Eigenvalue)) +
+#   geom_bar(stat = "identity", fill = "skyblue", alpha = 0.7) +  # Adding bars
+#   geom_point(size = 4) +
+#   geom_line(group = 1, color = "blue", linetype = "dashed") +
+#   ylim(0, 100) +  # Setting y-axis limits from 0 to 100
+#   theme_minimal() +
+#   labs(title = "Scree Plot",
+#        x = "Principal Component",
+#        y = "Variance explained (%)") +
+#   theme(text = element_text(size = 14))
+```
+
+Merge the PCA results with your phenotype file: Import metadata file
+
+```{r}
+pca_data = here("Samples538_A_Geno_Microbiome/A1_Plink/A1_00_Plink_files",
+                 "Samples538_55gene_Plink_PCA.eigenvec") %>%
+  read.table(header = FALSE, sep = "", comment.char = "#", as.is = TRUE) %>%
+  as_tibble() %>% 
+  rename(FID = V1, IID = V2, PC1 = V3, PC2 = V4, PC3 = V5, PC4 = V6, PC5 = V7)
+pca_data %>% head()
+
+
+Samples538_metadata <-here("Samples538_A_Geno_Microbiome/A1_Plink/A1_00_Plink_files",
+                           "Samples538_55gene_Plink.cov") %>% 
+                                  read.table( header = T, as.is = TRUE)
+Samples538_metadata %>% head()
+
+## add PC1 and PC2 to metadata by IID and FID
+Samples538_metadata <- left_join(Samples538_metadata,
+                                 pca_data,
+                                 by = c("FID", "IID"))
+Samples538_metadata %>% head()
+
+write.table(Samples538_metadata,
+            here("Samples538_A_Geno_Microbiome/A1_Plink/A1_00_Plink_files",
+                 "Samples538_Combined_covariates_PCA.txt"),
+            quote = F,
+            sep = "\t",
+            row.names = F)
+
+```
+
+## make correlation plot
+```{r}
+Samples538_metadata %>%  colnames()
+Samples538_metadata_cor <- Samples538_metadata %>%
+  # reversing the order of batches, the order does not matter.
+  mutate(Batch = case_when(
+    Batch_2 == 0 & Batch_3 == 0 ~ 3,   # If both Batch2 and Batch3 are 0, set Batch to 1
+    Batch_2 == 1 ~ 2,                 # If Batch2 is 1, set Batch to 2
+    Batch_3 == 1 ~ 1                  # If Batch3 is 1, set Batch to 3
+  )) %>%
+  dplyr::select(ECC_status, Sex, Age, RuralUrban,SEFI_score, PC1, PC2, PC3, PC4, PC5,Batch) %>%
+  cor(., use = "complete.obs", method = "spearman" )  # remove 'use' argument if no NAs
+Samples538_metadata_cor
+
+# Create a PNG file to save the plot
+png(filename = here("Samples538_A_Geno_Microbiome/A1_Plink/A1_00_Plink_files",
+                 "Samples538_Combined_covariates_PCA_corrplot.png"),
+    width = 15,
+    height = 15,
+    units = "cm",
+    res = 300)
+
+# Create correlation plot
+corrplot_covariates = corrplot::corrplot(Samples538_metadata_cor,
+                                         diag = F,
+                         method = "circle",
+                         type = "lower",
+                         tl.col = "black",
+                         tl.srt = 90)
+
+corrplot_covariates
+
+```
+```{r}
+
+# Create a PNG file to save the plot
+ggcorrplot_covariates = ggcorrplot::ggcorrplot(Samples538_metadata_cor,
+           method = "circle",
+           # insig = "pch",
+           type = "lower",
+           # show.diag = T, #  show diagonal
+           # pch = 2, # Add p-values
+           # p.mat = p_values, # Add p-values
+           legend.title = "Correlation\ncoefficient",
+           tl.col = "black",
+           digits = 2,
+           tl.srt = 90,
+           lab = FALSE, # Do not add correlation coefficient labels
+           colors = c("red",  "white", "blue"), # Slightly darker color palette
+           #title = "My Correlation Plot",
+           ggtheme = theme_bw() # A clean ggplot2 theme
+) 
+
+ggcorrplot_covariates = ggcorrplot_covariates + 
+  theme(
+    text = element_text(color = "black", size = 12), # Sets global text color to black and size to 12
+    axis.title = element_text(color = "black", size = 11), # Ensures axis titles are black and size to 11
+    axis.text.y = element_text(color = "black", size = 11, ), # Specifically adjusts x-axis text
+    axis.text.x = element_text(color = "black", size = 11, angle = 45, hjust = 1, vjust = 1),
+    legend.text = element_text(color = "black", size = 10), # Ensures legend text is black and size to 12
+    legend.title = element_text(color = "black", size = 12) # Ensures legend title is black and size to 10
+  )
+
+ggcorrplot_covariates %>% print() 
+
+# saveRDS(ggcorrplot_covariates,
+#         here("Samples538_A_Geno_Microbiome/A1_Plink/A1_00_Plink_files",
+#                  "Samples538_Combined_covariates_PCA_corrplot.png"))
+```
+
+
+# plink chi square test
+
+# Chi square test is required to get hte F_A and F_U values
+
+```{bash}
+source /home/wasif_pclab/anaconda3/etc/profile.d/conda.sh
+
+conda activate Plink_env
+
+mkdir -p /media/Second_stor/wasif/WK_Rprojects/RP_240910_Taste_Genes_Analysis_2/Samples538_A_Geno_Microbiome/A1_Plink/A1_00_Plink_files/
+cd /media/Second_stor/wasif/WK_Rprojects/RP_240910_Taste_Genes_Analysis_2/Samples538_A_Geno_Microbiome/A1_Plink/A1_00_Plink_files/
+
+metadata_dir=/media/Second_stor/wasif/WK_Rprojects/RP_230718_Taste_Genes_Analysis_1/Samples538_Analysis/Metadata538_files/
+
+plink \
+--bfile ./Samples538_55gene_Plink \
+--geno 0.01 \
+--maf 0.01 \
+--hwe 0.00001 \
+--assoc \
+--ci 0.95 \
+--make-pheno ${metadata_dir}/Samples538_Combined_Phenotype.txt 1 \
+--out ./Samples538_55gene_Plink_geno.01_maf.01_hwe.00001_assoc
+```
+
+```{r}
+
+```
+
+
+# add genes to the plink assoc file and 
+
+```{r}
+
+# Read VCF file
+vcf <- read.vcfR(here("../RP_230718_Taste_Genes_Analysis_1/Samples538_Analysis/Samples538_GATK/",
+                      "Samples538_55genes_GenotypeGVCFs_SNPIDs_filtered_anno_IDcomplete3.vcf"))
+
+
+# Extract chromosome and position
+chrom <- vcf@fix[,1]
+pos <- vcf@fix[,2]
+
+# Extract the INFO column
+info <- vcf@fix[,8]
+
+# Extract the ANN information from INFO by removing the 'ANN=' prefix
+ann_info <- gsub("^ANN=", "", info)
+
+# Each element of 'ann_info' can have multiple annotations (separated by comma),
+# and each annotation has multiple sub-fields (separated by '|').
+
+# Function to parse a single annotation
+# Updated parse_ann function from the previous correction
+parse_ann <- function(ann) {
+  # Split the annotation into sub-fields
+  sub_fields <- strsplit(ann, "\\|")[[1]]
+
+  # Check if there are enough sub-fields to extract the desired information
+  if (length(sub_fields) >= 11) {
+    gene_name <- sub_fields[4]
+    variant_type <- sub_fields[2]
+    hgvs_p <- sub_fields[11] # Extract HGVS.p information
+    return(c(gene_name, variant_type, hgvs_p))
+  } else {
+    return(c(NA, NA, NA))
+  }
+}
+
+rm(vcf)
+# Parse the ANN field for each variant to include HGVS.p information
+genes_and_variant_types  <- t(sapply(ann_info, parse_ann)) # transpose to make each row contain the gene, variant type, and HGVS.p
+
+# Modify the data frame creation to include HGVS.p information
+df_chromPOS_to_gene_variant  <- data.frame(
+  CHROM = chrom,
+  POS = pos,
+  Gene = genes_and_variant_types [,1],
+  Variant_Type = genes_and_variant_types [,2],
+  Variant_Effect = genes_and_variant_types [,3] # Include the HGVS.p information
+)
+
+df_chromPOS_to_gene_variant %>% head()
+
+df_chromPOS_to_gene_variant =  df_chromPOS_to_gene_variant %>%
+  # we do not need to print the effect of synonymous_variant as it is the same as the reference
+  mutate(Variant_Effect = if_else(Variant_Type == "synonymous_variant", "", Variant_Effect)) %>%
+  # replace those values as empty cells have problem in saving as word file
+ mutate(Variant_Effect = if_else(Variant_Effect == "", "-", Variant_Effect)) %>% 
+  mutate(CHROM = gsub("chr", "", CHROM))
+df_chromPOS_to_gene_variant %>% head()
+# genes_and_variant_types <- t(sapply(ann_info, parse_ann)) # transpose to make each gene-variant pair a row
+#
+# # Create a dataframe with the chromosome, position, gene name, and variant type
+# df_chromPOS_to_gene_variant <- data.frame(CHROM = chrom, POS = pos, Gene = genes_and_variant_types[,1], VARIANT_TYPE = genes_and_variant_types[,2])
+# df_chromPOS_to_gene_variant
+
+# save this file
+write.table(df_chromPOS_to_gene_variant,
+            here("Samples538_A_Geno_Microbiome/A1_Plink/",
+                 "Samples538_55gene_df_chromPOS_to_gene_variant.txt"),
+            quote = F,
+            sep = "\t",
+            row.names = F)
+```

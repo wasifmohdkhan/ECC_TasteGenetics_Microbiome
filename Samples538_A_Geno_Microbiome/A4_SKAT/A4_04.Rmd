@@ -1,0 +1,132 @@
+---
+title: "Combine plots for gene wise association"
+output: html_document
+date: "2024-11-15"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+```{r}
+rm(list = ls())
+```
+
+
+## Load libraries
+```{r}
+library(tidyverse)
+library(cowplot)
+library(here)
+library(extrafont)
+library(patchwork)
+# extrafont::font_import(prompt = FALSE)  # Import fonts; suppress prompts
+```
+
+
+## Load data
+```{r}
+A4_01_Common_Rare_w_Weights_SKAT_res =
+readRDS(file =here("Samples538_A_Geno_Microbiome/A4_SKAT/A4_01_Plink_additive",
+            "A4_01_Common_Rare_w_Weights_SKAT_res.rds")
+        )
+
+A4_02_Common_Rare_wout_Weights_SKAT_res = 
+  readRDS(here("Samples538_A_Geno_Microbiome/A4_SKAT/A4_01_Plink_additive",
+            "A4_02_Common_Rare_wout_Weights_SKAT_res.rds")
+        )
+
+A4_03_Rare_w_Weights_SKAT_res = 
+  readRDS(here("Samples538_A_Geno_Microbiome/A4_SKAT/A4_01_Plink_additive",
+            "A4_03_Rare_w_Weights_SKAT_res.rds")
+        )
+
+```
+
+## use cowplot to combine them vertically
+```{r}
+
+
+# 
+# combined_plots = plot_grid(A4_01_Common_Rare_w_Weights_SKAT_res,
+#                            A4_02_Common_Rare_wout_Weights_SKAT_res,
+#                            A4_03_Rare_w_Weights_SKAT_res,
+#                            ncol = 1)
+# combined_plots
+
+```
+
+
+cowplto does not work with legends other than right,
+since our legend is in bottom we have to do this
+https://stackoverflow.com/questions/78312006/cant-add-legend-to-a-cowplot-multiplot
+
+```{r, fig.width=6.5, fig.height=7}
+ggplot2::ggplot_gtable(ggplot2::ggplot_build(A4_01_Common_Rare_w_Weights_SKAT_res))
+
+# Ensure legend can be extracted
+common_legend = cowplot::get_plot_component(A4_01_Common_Rare_w_Weights_SKAT_res,
+                            "guide-box", return_all = TRUE)[[3]]
+grid::grid.draw(common_legend)
+```
+
+
+
+```{r, fig.width=6.5, fig.height=7}
+my_plot_margins = margin(t=-5, 10, b=-5, 10)
+plot1 <- A4_01_Common_Rare_w_Weights_SKAT_res + 
+  theme(legend.position = "none",
+        axis.title.x = element_text(color = "transparent"),
+    plot.margin = my_plot_margins
+        )
+
+plot2 <- A4_02_Common_Rare_wout_Weights_SKAT_res + 
+  theme(legend.position = "none",
+        axis.title.x = element_text(color = "transparent"),
+    plot.margin = my_plot_margins
+    )
+
+plot3 <- A4_03_Rare_w_Weights_SKAT_res + 
+  theme(legend.position = "none",
+    plot.margin = my_plot_margins
+    )  # Keep x-axis title visible
+
+combined_plots <- plot_grid(
+  plot1, plot2, plot3,
+  ncol = 1,
+  labels = c("A", "B", "C"),
+  label_size = 10,
+  align = "v",
+  axis = "l",
+  rel_heights = c(1, 1, 1)  # Equal spacing; no extra gaps
+)
+
+
+# Combine everything into the final layout
+final_plot <- plot_grid(
+  combined_plots,
+  common_legend,
+  ncol = 1,
+  rel_heights = c(3, 0.2)  # Adjust as needed for better legend spacing
+)
+
+# Save the final plot
+ggsave(here("Samples538_A_Geno_Microbiome/A4_SKAT/A4_Combined_Plots.jpg"),
+       plot = final_plot, width = 6.5, height = 7)
+
+
+
+```
+
+
+```{r}
+# final_plot <- (plot1 / plot2 / plot3) / common_legend
+# final_plot
+# 
+# # Save the final plot
+# ggsave(here("Samples538_A_Geno_Microbiome/A4_SKAT/A4_Combined_Plots.jpg"),
+#        plot = final_plot, width = 6.5, height = 7)
+
+```
+

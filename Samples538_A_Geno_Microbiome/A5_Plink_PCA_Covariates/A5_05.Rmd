@@ -1,0 +1,218 @@
+---
+title: "A5_05_Plink_additive_model5 Age,Sex,PC1,PC2,PC3,PC4,PC5,RuralUrban"
+output: html_document
+date: "2024-08-20"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+#### Replacements
+
+add --dominant or --recessive in plink command
+replace additive with dominant/recessive one by one
+replace A1_02 accordingly
+replace ADD to DOM
+
+## R Markdown
+
+```{r}
+rm(list = ls())
+```
+
+
+```{r}
+filext = "A5_05_Plink_additive_model5"
+```
+
+
+# Load libraries
+
+```{r}
+library(tidyverse)
+library(here)
+library(snpStats)
+library(vcfR)
+library(mbQTL)
+library(RColorBrewer)
+library(qqman)
+```
+
+### plink logistic association and chi square test
+
+#### add --dominant or --recessive accordingly
+
+```{bash}
+
+source /home/wasif_pclab/anaconda3/etc/profile.d/conda.sh
+
+conda activate Plink_env
+
+mkdir -p /media/Second_stor/wasif/WK_Rprojects/RP_240910_Taste_Genes_Analysis_2/Samples538_A_Geno_Microbiome/A5_Plink_PCA_Covariates
+cd /media/Second_stor/wasif/WK_Rprojects/RP_240910_Taste_Genes_Analysis_2/Samples538_A_Geno_Microbiome/A5_Plink_PCA_Covariates
+
+# remove the existing file first
+new_file="./Samples538_55gene_Plink_geno.01_maf.01_hwe.00001_logistic_additive"
+
+if [ -e "$new_file" ]; then
+    rm -r "$new_file"
+fi
+
+metadata_dir=/media/Second_stor/wasif/WK_Rprojects/RP_230718_Taste_Genes_Analysis_1/Samples538_Analysis/Metadata538_files/
+
+plink \
+--bfile ../A1_Plink/A1_00_Plink_files/Samples538_55gene_Plink \
+--geno 0.01 \
+--maf 0.01 \
+--hwe 0.00001 \
+--logistic \
+--ci 0.95 \
+--covar ../A1_Plink/A1_00_Plink_files/Samples538_Combined_covariates_PCA.txt \
+--covar-name Age,Sex,PC1,PC2,PC3,PC4,PC5,RuralUrban  \
+--make-pheno ${metadata_dir}/Samples538_Combined_Phenotype.txt 1 \
+--out ./$new_file
+```
+
+## Read the df_chromPOS_to_gene_variant file
+
+```{r}
+df_chromPOS_to_gene_variant = read.table(here("Samples538_A_Geno_Microbiome/A1_Plink/",
+                 "Samples538_55gene_df_chromPOS_to_gene_variant.txt"),
+            header = T,
+            sep = "\t")
+
+df_chromPOS_to_gene_variant = df_chromPOS_to_gene_variant %>% 
+    mutate( POS = as.character(POS),
+         CHROM = as.character(CHROM))
+
+df_chromPOS_to_gene_variant %>% head()
+
+```
+
+
+```{r}
+chi_assoc_file = read.table(here("Samples538_A_Geno_Microbiome/A1_Plink/A1_00_Plink_files",
+                             "Samples538_55gene_Plink_geno.01_maf.01_hwe.00001_assoc.assoc"),
+                        header = T)
+chi_assoc_file = chi_assoc_file %>%
+  mutate( BP = as.character(BP),
+         CHR = as.character(CHR)) %>% 
+  dplyr::select(CHR, SNP, BP, A1, A2, F_A, F_U) 
+chi_assoc_file %>% head()
+```
+
+
+## Assign gene name to assoc file
+
+```{r}
+logit_assoc_file = read.table(here("Samples538_A_Geno_Microbiome/A5_Plink_PCA_Covariates",
+                             "Samples538_55gene_Plink_geno.01_maf.01_hwe.00001_logistic_additive.assoc.logistic"),
+                        header = T)
+logit_assoc_file = logit_assoc_file %>%
+  mutate( BP = as.character(BP),
+         CHR = as.character(CHR)) %>% 
+  filter(TEST == "ADD") 
+logit_assoc_file %>% head()
+```
+
+
+
+## To select only those genes which are in bed file
+
+```{r}
+Gene55_names = read.table(here("../RP_230718_Taste_Genes_Analysis_1/References_Seqs/bed_files",
+                               "Gene55_names_only.txt"),
+                        header = F)
+Gene55_names
+```
+
+# merge assoc file with gene names and chi sqare results
+
+```{r}
+assoc_file_df_chromPOS_to_gene_variant =  inner_join(logit_assoc_file, df_chromPOS_to_gene_variant,
+                                             by = c("CHR" = "CHROM", "BP" = "POS")) %>% 
+  ## To add the information related to F_A and F_U
+  inner_join(., chi_assoc_file, by = c("CHR" = "CHR",
+                                    "BP" = "BP",
+                                    "SNP" = "SNP",
+                                    "A1" = "A1"
+                                    ))
+assoc_file_df_chromPOS_to_gene_variant %>% head()
+
+assoc_file_df_chromPOS_to_gene_variant_adjP = assoc_file_df_chromPOS_to_gene_variant %>% 
+  mutate(P_BH = p.adjust(P, method = "BH"),
+         P_Bonferroni = p.adjust(P, method = "bonferroni")  ) %>% 
+  arrange(P_BH, SNP) %>% 
+  mutate(BP= as.numeric(BP)) %>% 
+  # to filter only those genes which are in bed file
+  filter(Gene %in% Gene55_names$V1)
+assoc_file_df_chromPOS_to_gene_variant_adjP %>% head()
+
+```
+
+```{r}
+assoc_file_df_chromPOS_to_gene_variant_adjP_3 = assoc_file_df_chromPOS_to_gene_variant_adjP %>% 
+  # arrange(Gene) %>% 
+  mutate(Location_GRCh38 = paste0("chr", CHR, ":", BP),
+         Frq_ECC = F_A,
+         Frq_CF = F_U) %>% 
+  dplyr::select(Gene, SNP, Location_GRCh38, A1, A2,  STAT, P, OR,
+                P_Bonferroni, P_BH, Variant_Type,Variant_Effect,
+                Frq_ECC, Frq_CF, SE) %>% 
+  # extract SNP rsID
+  separate(SNP, into = c(NA, NA, NA, "SNP_rsID"), sep = "_+", remove = FALSE)
+assoc_file_df_chromPOS_to_gene_variant_adjP_3
+
+# write.table(assoc_file_df_chromPOS_to_gene_variant_adjP_3, 
+#             here("Samples538_A_Geno_Microbiome/A5_Plink_PCA_Covariates",
+#                  paste0(filext,"_cov_anno.txt") ),
+#             sep = "\t", quote = F, row.names = F)
+
+```
+
+## Load the file
+
+```{r}
+# Samples538_Plink_logit_cov_w_anno = read.table(here("Samples538_A_Geno_Microbiome/A5_Plink_PCA_Covariates",
+#                                                                paste0(filext,"_cov_anno.txt")),
+#                                                           header = T)
+# Samples538_Plink_logit_cov_w_anno %>% head()
+```
+
+
+
+Make a dataframe for the p and OR values
+```{r}
+assoc_file_df_chromPOS_to_gene_variant_adjP_3
+
+Sample_538_p_OR <- assoc_file_df_chromPOS_to_gene_variant_adjP_3 %>%
+  filter(P_Bonferroni < 0.05) %>%
+  dplyr::select(SNP, P_BH, OR) %>%
+  mutate(P_BH = as.numeric(P_BH)) %>%
+  mutate(OR = as.numeric(OR)) %>%
+  filter(!is.na(P_BH)) %>%
+  mutate(log10p = -log10(P_BH), log2OR = log2(OR)) %>%
+  arrange(P_BH) %>%
+  filter(!is.na(log10p)) %>% 
+  dplyr::select(SNP, log10p, log2OR)
+
+Sample_538_p_OR
+
+# make the dataframe longer
+
+Sample_538_p_OR_long <- Sample_538_p_OR %>%
+  pivot_longer(cols = c(log10p, log2OR),
+               names_to = "Variable",
+               values_to = "Value")
+Sample_538_p_OR_long
+
+# save as R object
+
+saveRDS(Sample_538_p_OR_long,
+     file = here("Samples538_A_Geno_Microbiome/A5_Plink_PCA_Covariates",
+                 paste0(filext,"_p_OR.rds")
+                 )
+     )
+```

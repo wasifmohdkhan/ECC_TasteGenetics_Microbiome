@@ -1,0 +1,315 @@
+---
+title: "Combined Heatmap for significant variants in each model and lambda"
+output: html_document
+date: "2024-08-28"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+```{r}
+rm(list=ls())
+```
+
+```{r}
+library(here)
+library(tidyverse)
+library(ComplexHeatmap)
+```
+
+
+
+```{r}
+# Define the directory where your RDS files are stored
+dir_path <- here("Samples538_A_Geno_Microbiome/A5_Plink_PCA_Covariates")
+
+# Get a list of all RDS files in the directory
+files <- list.files(dir_path, pattern = "*.rds", full.names = TRUE)
+
+# Load all the RDS files and combine them into a single dataframe
+combined_data <- files %>%
+  # Read each RDS file and add a "model" column based on the file name
+  map_dfr(~ readRDS(.x) %>%
+            mutate(model = gsub("^A5.*_Plink_additive_|_p_OR.rds$", "", basename(.x))))  # Clean the file name to create the model name
+combined_data %>% head()
+combined_data %>% tail()
+
+combined_data = combined_data %>% 
+  arrange(SNP) %>%
+  mutate(SNP = gsub("chr\\d+_\\d+_", "", SNP)) %>% 
+  mutate(SNP = factor(SNP, levels = unique(SNP)))
+combined_data %>% head()
+
+
+```
+
+
+```{r}
+## raname model names to include covariates used
+combined_data_2 = combined_data %>% 
+  mutate(model = case_when(
+    model == "model1"   ~ "Age_Sex",
+    model == "model2"   ~ "Age_Sex_Batches",
+    model == "model3" ~ "Age_Sex_PC1-5",
+    model == "model4" ~ "Age_Sex_PC1-5_Batches",
+    model == "model5"   ~ "Age_Sex_PC1-5_RuralUrban",
+    model == "model6"   ~ "Age_Sex_PC1-5_SEFI",
+    model == "model7"   ~ "Age_Sex_PC1-5_RuralUrban_SEFI",
+    # model == "model8"   ~ "(DOM)_Age_Sex_PC1-5_RuralUrban_SEFI",
+    TRUE ~ NA_character_  # In case no match is found
+  )) %>%
+  # to maintain the order of the models
+  mutate(model = factor(model,
+                        levels = c(
+                          "Age_Sex",
+                          "Age_Sex_Batches",
+                          "Age_Sex_PC1-5",
+                          "Age_Sex_PC1-5_Batches",
+                          "Age_Sex_PC1-5_RuralUrban",
+                          "Age_Sex_PC1-5_SEFI",
+                          "Age_Sex_PC1-5_RuralUrban_SEFI"#,
+                          # "(DOM)_Age_Sex_PC1-5_RuralUrban_SEFI"
+                          
+  ))) %>%
+  # remove rows with NA anywhere
+  drop_na()
+
+combined_data_2 %>% head()
+combined_data_2 %>% tail()
+
+```
+
+
+
+
+## Extract union of SNP names
+```{r}
+# # Extract the union of SNP names from all models
+# union_snps <- combined_data_2 %>%
+#   pull(SNP) %>%
+#   unique()
+# union_snps
+# 
+# # save the union snps
+# write.table(union_snps,
+#             file = here("Samples538_A_Geno_Microbiome/A5_Plink_PCA_Covariates/Union_of_sig_snps.txt"), 
+#             row.names = FALSE, col.names = FALSE, quote = FALSE)
+
+
+```
+
+
+```{r}
+# Filter for log2OR values
+log2OR_data <- combined_data_2 %>%
+  filter(Variable == "log2OR") %>%
+  dplyr::select(SNP, model, Value)
+
+# Reshape data to wide format for the heatmap
+heatmap_data_log2OR <- log2OR_data %>%
+  spread(model, Value) %>% 
+  replace(is.na(.), 0) %>%    # Replace NAs with 0
+  mutate(SNP = factor(SNP, levels = levels(combined_data$SNP))) %>%  # Reorder SNPs
+  arrange(SNP) %>%  # Arrange SNPs
+  column_to_rownames("SNP") %>%
+  as.matrix()
+
+# Check the resulting heatmap data
+heatmap_data_log2OR %>% head()
+
+```
+
+
+```{r}
+# # Generate the heatmap
+# ComplexHeatmap::Heatmap(heatmap_data_log2OR,
+#                          name = "log2OR",
+#                          column_title = "Models",
+#                          row_title = "SNPs",
+#                          heatmap_legend_param = list(title = "log2OR"),
+#                          show_row_names = TRUE,
+#                          show_column_names = TRUE,
+#                         cluster_rows = FALSE)
+```
+
+
+
+```{r}
+
+```
+
+## Add pvalues
+
+```{r}
+# Convert log10p values to p-values
+pvalue_data <- combined_data_2 %>%
+  filter(Variable == "log10p") %>%
+  mutate(P_value = 10^(-Value)) %>% # Convert log10p to p-values
+  select(SNP, model, P_value)
+pvalue_data
+
+# Create a matrix of significance annotations (*, **, ***)
+significance_matrix <- pvalue_data %>%
+  mutate(Significance = case_when(
+    P_value < 0.00001 ~ "***",
+    P_value < 0.001 ~ "**",
+    P_value < 0.05 ~ "*",
+    TRUE ~ ""
+  )) %>%
+  select(SNP, model, Significance) %>%
+  spread(model, Significance)
+  
+significance_matrix
+
+heatmap_data_p = significance_matrix %>% 
+  replace(is.na(.), "") %>%
+    mutate(SNP = factor(SNP, levels = levels(combined_data$SNP))) %>%  # Reorder SNPs
+  arrange(SNP) %>%  # Arrange SNPs
+  column_to_rownames("SNP") %>% 
+  as.matrix()
+heatmap_data_p
+```
+```{r}
+# Check if row names are in the same order
+identical(rownames(heatmap_data_log2OR), rownames(heatmap_data_p))
+
+# check if the column names are in the same order
+identical(colnames(heatmap_data_log2OR), colnames(heatmap_data_p))
+
+# # Should be TRUE
+# 
+# [1] TRUE
+# [1] TRUE
+```
+
+```{r}
+
+# # Open a PNG device to save the plot
+# jpg(here("Samples538_A_Geno_Microbiome/A5_Plink_PCA_Covariates",
+#          "Heatmap_all_models.png"),
+#     width = 3000, height = 4300, res = 300)
+# 
+# 
+# # Generate the heatmap with significance annotations
+# ComplexHeatmap::Heatmap(heatmap_data_log2OR,
+#                          name = "log2OR",
+#                          column_title = "Models",
+#                          row_title = "SNPs",
+#                          heatmap_legend_param = list(
+#                              title = "log2OR", 
+#                              # legend_direction = "horizontal",
+#                              legend_width = unit(6, "cm"),
+#                              title_position = "topcenter"
+#                          ),
+#                          show_row_names = TRUE,
+#                          show_column_names = TRUE,
+#                          cluster_rows = FALSE,
+#                          cluster_columns = FALSE,
+#                          border = TRUE,
+#                          rect_gp = gpar(col = "black", lwd = 0.5),
+#                          cell_fun = function(j, i, x, y, width, height, fill) {
+#                              grid.text(heatmap_data_p[i, j], x, y)
+#                          }
+# )
+```
+
+```{r}
+
+# Open a PNG device to save the plot
+jpeg(here("Samples538_A_Geno_Microbiome/A5_Plink_PCA_Covariates",
+         "A5_10_Heatmap_all_models.png"),
+    width = 3000, height = 4300, res = 300)
+
+ht <- ComplexHeatmap::Heatmap(heatmap_data_log2OR,
+                         name = "log2OR",
+                         column_title = "Models with Covariates",
+                         row_title = "Significant SNPs in each model (q-value < 0.05)",
+                         # heatmap_legend_param = list(
+                         #   title = "log2OR",
+                         #   legend_direction = "vertical",
+                         #   legend_width = unit(40, "cm"),
+                         #   title_position = "topcenter"
+                         # ),
+                         column_names_rot = 60,
+                         column_title_side = "bottom",
+                         show_row_names = TRUE,
+                         show_column_names = TRUE,
+                         cluster_rows = FALSE,
+                         cluster_columns = FALSE,
+                         border = TRUE,
+                         rect_gp = gpar(col = "black", lwd = 0.5),
+                         row_names_gp = gpar(fontsize = 8), # Adjust fontsize here
+                         cell_fun = function(j, i, x, y, width, height, fill) {
+                           grid.text(heatmap_data_p[i, j], x, y)
+                         })
+
+# Adjust the margins to allocate more space for long row names
+draw(ht,
+     # heatmap_legend_side = "left",
+     # annotation_legend_side = "left",
+     padding = unit(c(2, 2, 2, 25), "mm")) # Add padding on the right for long names
+
+dev.off()
+```
+
+## ggplot for lambda value in each model
+
+
+```{r}
+# Get the original factor levels
+original_levels <- levels(combined_data_2$model)
+
+
+# using the current order of 'model' for factor levels
+combined_data_3 <- combined_data_2 %>%
+  mutate(value = case_when(
+    model == "Age_Sex"                  ~ 4.106,
+    model == "Age_Sex_Batches"          ~ 4.768,
+    model == "Age_Sex_PC1-5"            ~ 1.664,
+    model == "Age_Sex_PC1-5_Batches"    ~ 1.801,
+    model == "Age_Sex_PC1-5_SEFI"       ~ 1.252,       
+    model == "Age_Sex_PC1-5_RuralUrban"      ~ 1.235,
+    model == "Age_Sex_PC1-5_RuralUrban_SEFI" ~ 1.026,
+    model == "(DOM)_Age_Sex_PC1-5_RuralUrban_SEFI" ~ 1.054,
+    TRUE ~ NA_real_  # If no match, NA will be assigned
+  )) %>% 
+  select(model, value) %>% 
+  distinct() %>% 
+  drop_na()
+  # Remove "_logit" from model names and use unique factor levels in the current order
+  #  # Remove "_logit" from model names, preserving original factor order
+  # mutate(model = factor(str_remove(model, "_logit"), 
+  #                       levels = str_remove(original_levels, "_logit")))
+
+combined_data_3
+```
+
+
+```{r}
+# Plot the bar plot with a horizontal line at y = 1 and value labels
+ggplot(combined_data_3, aes(x = model, y = value)) +
+  geom_bar(stat = "identity") +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "red") +  # Add horizontal line at y = 1
+  geom_text(aes(label = round(value, 3)), vjust = -0.5, size = 5, color = "black") +  # Add values on top of bars
+  theme_bw() +  # Change theme to black and white
+  # change y axis range
+  scale_y_continuous(limits = c(0, 5.5)) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1, size = 14, color = "black", family = "Arial"),
+        axis.text.y = element_text(size = 10, color = "black", family = "Arial")) +  # Rotate x-axis labels
+  labs(title = expression("Genomic inflation factor ("*lambda*" ) for different combination of covariates"),
+       caption = "Lower values are better",
+       x = "Covariates used in logistic regression model", 
+       y = expression("Inflation Factor ("*lambda*" )")
+  )
+
+  ggsave(here("Samples538_A_Geno_Microbiome/A5_Plink_PCA_Covariates",
+              "A5_10_Genomic_inflation_factor_all_models.png"),
+         width = 12, height = 10, dpi = 300)
+
+```
+
+
+
+

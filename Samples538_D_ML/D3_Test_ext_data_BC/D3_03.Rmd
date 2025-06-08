@@ -1,0 +1,287 @@
+---
+title: "16S MRS comparison on ext sPLSDA data"
+output: html_document
+date: "2024-01-02"
+---
+
+### MRS Score Calculation with Maaslin2 Coefficients and External Dataset Validation
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Setup
+```{r}
+library(dplyr)
+library(here)
+library(pROC)
+library(tidyr)
+library(ggplot2)
+library(PRROC)
+```
+
+# Load Maaslin2 Coefficients and Filter for q-value < 0.01
+```{r}
+maaslin2_results <- readRDS(here("Samples538_A_Geno_Microbiome/A2_Maaslin",
+                                 "A2_04_Species_coef_qval_16S_ITS.rds"))
+maaslin2_results
+# Filter significant species
+significant_species <- maaslin2_results %>%
+  filter(q_values < 0.01) %>%
+  rename(Species = OTUs) %>%
+  ## filter for non fungal species with F_s_ prefix
+  filter(!grepl("F_s_", Species)) %>%
+  dplyr::select(Species, Coefficients)
+
+significant_species
+```
+
+# Prepare Train and Test Datasets
+```{r}
+# Load train dataset
+train_data <- readRDS(here("Samples538_D_ML/D3_Test_ext_data_BC/sPLSDA_Datasets",
+                                                 "Khan_2024_MaAsLin2_CLR_sPLSDA_ECCstatus.rds"))
+
+# Ensure only significant species are selected
+train_data_filtered <- train_data %>%
+  dplyr::select(all_of(c("ECC_status", significant_species$Species)))
+
+# Replace NA values with 0
+train_data_filtered <- train_data_filtered %>% replace(is.na(.), 0)
+
+# Split into train and test sets
+set.seed(123)
+split <- initial_split(train_data_filtered, prop = 0.8)
+train_data <- training(split)
+test_data <- testing(split)
+
+train_data
+test_data
+```
+
+# Calculate MRS Scores for Train and Test Datasets
+```{r}
+# Calculate MRS as the weighted sum of significant species abundances
+mrs_train <- train_data %>%
+  rowwise() %>%
+  mutate(MRS_Score = sum(across(all_of(significant_species$Species)) * significant_species$Coefficient)) %>%
+  ungroup()
+
+mrs_test <- test_data %>%
+  rowwise() %>%
+  mutate(MRS_Score = sum(across(all_of(significant_species$Species)) * significant_species$Coefficient)) %>%
+  ungroup()
+
+mrs_train
+mrs_test
+```
+
+# Evaluate Performance on Test Dataset
+```{r}
+# Determine the optimal threshold
+roc_result_test <- roc(mrs_test$ECC_status, mrs_test$MRS_Score, levels = c("0", "1"), direction = "auto")
+optimal_threshold <- coords(roc_result_test, "best", ret = "threshold", transpose = FALSE)
+
+# Calculate AUROC
+auc_test <- as.numeric(auc(roc_result_test))
+auc_test
+
+# Calculate AUPRC
+auprc_test <- pr.curve(scores.class1 = mrs_test$MRS_Score[mrs_test$ECC_status == "0"], 
+                       scores.class0 = mrs_test$MRS_Score[mrs_test$ECC_status == "1"], 
+                       curve = FALSE)$auc.integral
+auprc_test
+
+# Add to results
+test_results <- tibble(
+  Dataset = "Holdout_data",
+  AUROC = auc_test,
+  AUPRC = auprc_test
+)
+```
+
+# Apply MRS Equation on External Datasets and Calculate AUROC and AUPRC
+```{r}
+external_dataset_names <- c("Agnello_2017", "Gomez_2017", "Kalpana_2020", "Teng_2015")
+external_results <- list()
+
+for (dataset_name in external_dataset_names) {
+  # Load external dataset
+  dataset_folder <- here("Samples538_D_ML/D3_Test_ext_data_BC/sPLSDA_Datasets") 
+  ext_data <- readRDS(file.path(dataset_folder,
+                                paste0(dataset_name, "_MaAsLin2_CLR_sPLSDA_ECCstatus.rds")))
+  
+  # Ensure columns match significant species
+  ext_data <- ext_data %>%
+    dplyr::select(all_of(c("ECC_status", significant_species$Species))) %>%
+    replace(is.na(.), 0)
+  
+  # Calculate MRS for the external dataset
+  ext_data <- ext_data %>%
+    rowwise() %>%
+    mutate(MRS_Score = sum(across(all_of(significant_species$Species)) * significant_species$Coefficient)) %>%
+    ungroup()
+  
+  # Calculate AUROC for MRS scores
+  roc_result <- roc(ext_data$ECC_status, ext_data$MRS_Score, levels = c("0", "1"), direction = "auto")
+  auc_value <- as.numeric(auc(roc_result))  # Convert AUROC to numeric
+
+  # Calculate AUPRC
+  auprc_value <- pr.curve(scores.class1 = ext_data$MRS_Score[ext_data$ECC_status == "0"], 
+                          scores.class0 = ext_data$MRS_Score[ext_data$ECC_status == "1"], 
+                          curve = FALSE)$auc.integral
+
+  external_results[[dataset_name]] <- tibble(Dataset = dataset_name, AUROC = auc_value, AUPRC = auprc_value)
+}
+
+# Combine results into a single dataframe
+external_results_df <- bind_rows(external_results) %>%
+  bind_rows(test_results)  # Add test dataset results
+
+# Ensure "Holdout_data" is first
+external_results_df <- external_results_df %>%
+  mutate(Dataset = factor(Dataset, levels = c("Holdout_data", setdiff(Dataset, "Holdout_data"))))
+
+# View results
+external_results_df
+```
+
+# Plot AUROC and AUPRC Results for External Datasets
+```{r}
+external_results_long <- external_results_df %>%
+  pivot_longer(cols = c(AUROC, AUPRC), names_to = "Metric", values_to = "Value")
+
+external_results_long_plot = 
+ggplot(external_results_long, aes(x = Dataset, y = Value, fill = Metric)) +
+  geom_bar(stat = "identity", position = "dodge",width = 0.6, alpha = 0.8, color = "black") +
+  geom_hline(yintercept = 0.5, linetype = "dashed", color = "red", linewidth = 0.2) +
+  labs(
+    # title = "MRS Performance on sPLSDA values",
+    x = "Dataset",
+    y = "Model Pefromance",
+    fill = "Performance Metric"
+  ) +
+  scale_y_continuous(breaks = seq(0, 1, 0.2), limits = c(0, 1)) +
+  theme_bw(base_family = "Arial") +
+  theme( text = element_text(color = "black"),
+    axis.text = element_text( size = 5, color = "black"),
+    axis.title = element_text(size = 6, color = "black", face = "bold"),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    axis.ticks.y = element_blank(), # Hide y-axis ticks
+    axis.ticks.x = element_blank(), # Hide x-axis ticks if desired
+    panel.background = element_blank(), # Remove panel background
+    legend.title = element_text(size = 6, color = "black"),
+    legend.text = element_text(size = 5, color = "black"),
+    legend.key.size = unit(0.2, "cm"),
+    plot.title = element_blank(),
+    legend.position = "top",
+    # axis.line.x = element_line(color="black"), # Keep x-axis line
+    # axis.line.y = element_line(color="black"),
+    panel.grid.minor = element_blank(),
+  panel.grid.major = element_line(size = 0.1, color = "gray90")
+  ) 
+external_results_long_plot
+
+# Save plot
+ggsave(here("Samples538_D_ML/D3_Test_ext_data_BC",
+            "D3_03_MRS_Performance_sPLSDA.png"),
+       external_results_long_plot,
+       width = 5, height = 4)
+
+# save rds
+saveRDS(external_results_long_plot, here("Samples538_D_ML/D3_Test_ext_data_BC", "D3_03_MRS_Performance_sPLSDA.rds"))
+
+```
+# Apply MRS Equation on External Datasets and Calculate AUROC and AUPRC
+```{r}
+external_dataset_names <- c("Agnello_2017", "Gomez_2017", "Kalpana_2020", "Teng_2015")
+external_results <- list()
+
+for (dataset_name in external_dataset_names) {
+  # Load external dataset
+  dataset_folder <- here("Samples538_D_ML/D2_ML_ext_data/Datasets") 
+  ext_data <- readRDS(file.path(dataset_folder,
+                                paste0(dataset_name, "_MaAsLin2_CLR_ECCstatus.rds")))
+  
+  # Ensure columns match significant species
+  ext_data <- ext_data %>%
+    dplyr::select(any_of(c("ECC_status", significant_species$Species))) %>%
+    replace(is.na(.), 0)
+  
+  # Calculate MRS for the external dataset
+  ext_data <- ext_data %>%
+    rowwise() %>%
+    mutate(MRS_Score = sum(across(any_of(significant_species$Species)) * significant_species$Coefficient)) %>%
+    ungroup()
+  
+  # Calculate AUROC for MRS scores
+  roc_result <- roc(ext_data$ECC_status, ext_data$MRS_Score, levels = c("0", "1"), direction = "auto")
+  auc_value <- as.numeric(auc(roc_result))  # Convert AUROC to numeric
+
+  # Calculate AUPRC
+  auprc_value <- pr.curve(scores.class1 = ext_data$MRS_Score[ext_data$ECC_status == "0"], 
+                          scores.class0 = ext_data$MRS_Score[ext_data$ECC_status == "1"], 
+                          curve = FALSE)$auc.integral
+
+  external_results[[dataset_name]] <- tibble(Dataset = dataset_name, AUROC = auc_value, AUPRC = auprc_value)
+}
+
+# Combine results into a single dataframe
+external_results_df <- bind_rows(external_results) %>%
+  bind_rows(test_results)  # Add test dataset results
+
+# Ensure "Holdout_data" is first
+external_results_df <- external_results_df %>%
+  mutate(Dataset = factor(Dataset, levels = c("Holdout_data", setdiff(Dataset, "Holdout_data"))))
+
+# View results
+external_results_df
+```
+
+# Plot AUROC and AUPRC Results for External Datasets
+```{r}
+external_results_long <- external_results_df %>%
+  pivot_longer(cols = c(AUROC, AUPRC), names_to = "Metric", values_to = "Value")
+
+external_results_long_plot = 
+ggplot(external_results_long, aes(x = Dataset, y = Value, fill = Metric)) +
+  geom_bar(stat = "identity", position = "dodge",width = 0.6, alpha = 0.8, color = "black") +
+  geom_hline(yintercept = 0.5, linetype = "dashed", color = "red", linewidth = 0.2) +
+  labs(
+    # title = "MRS Performance on sPLSDA values",
+    x = "Dataset",
+    y = "Model Pefromance",
+    fill = "Performance Metric"
+  ) +
+  scale_y_continuous(breaks = seq(0, 1, 0.2), limits = c(0, 1)) +
+  theme_bw(base_family = "Arial") +
+  theme( text = element_text(color = "black"),
+    axis.text = element_text( size = 5, color = "black"),
+    axis.title = element_text(size = 6, color = "black", face = "bold"),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    axis.ticks.y = element_blank(), # Hide y-axis ticks
+    axis.ticks.x = element_blank(), # Hide x-axis ticks if desired
+    panel.background = element_blank(), # Remove panel background
+    legend.title = element_text(size = 6, color = "black"),
+    legend.text = element_text(size = 5, color = "black"),
+    legend.key.size = unit(0.2, "cm"),
+    plot.title = element_blank(),
+    legend.position = "top",
+    # axis.line.x = element_line(color="black"), # Keep x-axis line
+    # axis.line.y = element_line(color="black"),
+    panel.grid.minor = element_blank(),
+  panel.grid.major = element_line(size = 0.1, color = "gray90")
+  ) 
+external_results_long_plot
+
+# Save plot
+ggsave(here("Samples538_D_ML/D3_Test_ext_data_BC",
+            "D3_03_MRS_Performance.png"),
+       external_results_long_plot,
+       width = 5, height = 4)
+
+# save rds
+saveRDS(external_results_long_plot, here("Samples538_D_ML/D3_Test_ext_data_BC", "D3_03_MRS_Performance.rds"))
+
+```
+

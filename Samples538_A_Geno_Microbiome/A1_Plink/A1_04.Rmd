@@ -1,0 +1,210 @@
+---
+title: "combine plots"
+output: html_document
+date: "2024-11-17"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+```{r}
+rm(list = ls())
+```
+
+
+## Load libraries
+```{r}
+library(tidyverse)
+library(cowplot)
+library(here)
+library(extrafont)
+library(patchwork)
+# extrafont::font_import(prompt = FALSE)  # Import fonts; suppress prompts
+```
+
+
+## Load data
+
+```{r}
+A1_01_Samples538_55gene_logistic_additive_QQ_plot = 
+  readRDS(file =here("Samples538_A_Geno_Microbiome/A1_Plink/A1_01_Plink_additive",
+            "A1_01_Samples538_55gene_logistic_additive_QQ_plot.rds")
+        )
+
+A1_01_Samples538_55gene_logistic_additive_volcano_plot =
+  readRDS(here("Samples538_A_Geno_Microbiome/A1_Plink/A1_01_Plink_additive",
+            "A1_01_Samples538_55gene_logistic_additive_volcano_plot.rds")
+        )
+
+## use cowplot to combine them horizontally
+
+# Extract the legend from the volcano plot
+legend <- cowplot::get_legend(A1_01_Samples538_55gene_logistic_additive_volcano_plot)
+
+# Scale the legend
+scaled_legend <- ggdraw() + draw_grob(legend, scale = 0.25)  # Adjust 'scale' to control legend size
+
+plot1 <- A1_01_Samples538_55gene_logistic_additive_QQ_plot + theme(legend.position = "none")
+
+plot2 <- A1_01_Samples538_55gene_logistic_additive_volcano_plot + theme(legend.position = "none")
+
+
+# Combine the plots (without the legend)
+additive_combined <- plot_grid(plot1, plot2, ncol = 2)
+
+# Add the scaled legend to the combined plot
+additive_combined_legend <- plot_grid(
+  additive_combined,
+  scaled_legend,                  # Use the scaled legend here
+  nrow = 1,                       # Arrange horizontally
+  # ncol = 2,                       # Two columns: plots and legend
+
+  # rel_heights = c(5, 3)               # Adjust height to match the plots
+    rel_widths = c(20, 6.5)          # Adjust space allocation between plots and legend
+)
+
+# Display the final combined plot
+print(additive_combined_legend)
+```
+
+## combine dominant  model plots
+
+```{r}
+A1_02_Samples538_55gene_logistic_dominant_QQ_plot = 
+  readRDS(file =here("Samples538_A_Geno_Microbiome/A1_Plink/A1_02_Plink_dominant",
+            "A1_02_Samples538_55gene_logistic_dominant_QQ_plot.rds")
+        )
+
+A1_02_Samples538_55gene_logistic_dominant_volcano_plot =
+  readRDS(here("Samples538_A_Geno_Microbiome/A1_Plink/A1_02_Plink_dominant",
+            "A1_02_Samples538_55gene_logistic_dominant_volcano_plot.rds")
+        )
+
+## use cowplot to combine them horizontally
+
+plot1 <- A1_02_Samples538_55gene_logistic_dominant_QQ_plot + theme(legend.position = "none")
+
+plot2 <- A1_02_Samples538_55gene_logistic_dominant_volcano_plot + theme(legend.position = "none")
+
+# Combine the plots (without the legend)
+dominant_combined <- plot_grid(plot1, plot2, ncol = 2)
+
+# Add the scaled legend to the combined plot
+dominant_combined_legend <- plot_grid(
+  dominant_combined,
+  scaled_legend,                  # Use the scaled legend here
+  nrow = 1,                       # Arrange horizontally
+  # ncol = 2,                       # Two columns: plots and legend
+
+  # rel_heights = c(5, 3)               # Adjust height to match the plots
+    rel_widths = c(20, 6.5)           # Adjust space allocation between plots and legend
+)
+
+# Display the final combined plot
+print(dominant_combined_legend)
+
+
+```
+
+## combine recessive model plots
+
+```{r}
+A1_03_Samples538_55gene_logistic_recessive_QQ_plot = 
+  readRDS(file =here("Samples538_A_Geno_Microbiome/A1_Plink/A1_03_Plink_recessive",
+            "A1_03_Samples538_55gene_logistic_recessive_QQ_plot.rds")
+        )
+
+A1_03_Samples538_55gene_logistic_recessive_volcano_plot =
+  readRDS(here("Samples538_A_Geno_Microbiome/A1_Plink/A1_03_Plink_recessive",
+            "A1_03_Samples538_55gene_logistic_recessive_volcano_plot.rds")
+        )
+
+## use cowplot to combine them horizontally
+
+plot1 <- A1_03_Samples538_55gene_logistic_recessive_QQ_plot + theme(legend.position = "none")
+
+plot2 <- A1_03_Samples538_55gene_logistic_recessive_volcano_plot + theme(legend.position = "none")
+
+
+# Combine the plots (without the legend)
+recessive_combined <- plot_grid(plot1, plot2, ncol = 2)
+
+# Add the scaled legend to the combined plot
+recessive_combined_legend <- plot_grid(
+  recessive_combined,
+  legend,                  # Use the scaled legend here
+  nrow = 1,                       # Arrange horizontally
+  # ncol = 2,                       # Two columns: plots and legend
+
+  # rel_heights = c(5, 3)               # Adjust height to match the plots
+    rel_widths = c(20, 6.5)           # Adjust space allocation between plots and legend
+)
+
+# Display the final combined plot
+print(recessive_combined_legend)
+
+
+
+```
+
+## combine additive dominant recessive model plots
+```{r}
+# combined_QQ_volane_plot = plot_grid(additive_combined_legend + theme(plot.margin = margin(5, 0, 5, 0)),
+#                                     dominant_combined_legend + theme(plot.margin = margin(5, 0, 5, 0)),
+#                                     recessive_combined_legend + theme(plot.margin = margin(5, 0, 5, 0)),
+#                                     ncol = 1,
+#                                     labels = c("A", "B", "C"),
+#                                     label_size = 10)
+# combined_QQ_volane_plot
+# 
+# # Save the final plot to a file
+# ggsave(
+#   here("Samples538_A_Geno_Microbiome/A1_Plink",
+#        "A5_combined_QQ_volane_plot.jpg"),
+#   plot = combined_QQ_volane_plot,
+#   width = 6.5,                     # Adjust width to accommodate all elements
+#   height =7.5                      # Adjust height to maintain aspect ratio
+# )
+
+```
+
+
+```{r}
+my_plot_margins = margin(0, 0, 0, 0)
+combined_QQ_volane_plot = plot_grid(additive_combined + theme(plot.margin = my_plot_margins),
+                                    dominant_combined + theme(plot.margin = my_plot_margins),
+                                    recessive_combined + theme(plot.margin = my_plot_margins),
+                                    ncol = 1,
+                                    labels = c("A", "B", "C"),
+                                    label_size = 10,
+                                    label_y = 1.05,
+                                    label_x = -0.02
+                                    )
+combined_QQ_volane_plot
+
+# Add the scaled legend to the combined plot
+combined_QQ_volane_plot_legend <- plot_grid(
+  combined_QQ_volane_plot,
+  scaled_legend,                  # Use the scaled legend here
+  nrow = 1,                       # Arrange horizontally
+  # ncol = 2,                       # Two columns: plots and legend
+
+  # rel_heights = c(5, 3)               # Adjust height to match the plots
+    rel_widths = c(20, 6.5)           # Adjust space allocation between plots and legend
+) +
+  theme(plot.margin = margin(6, 5, 00, 5))  # Add margins to the full combined plot
+
+combined_QQ_volane_plot_legend
+
+# Save the final plot to a file
+ggsave(
+  here("Samples538_A_Geno_Microbiome/A1_Plink",
+       "A5_combined_QQ_volane_plot.jpg"),
+  plot = combined_QQ_volane_plot_legend,
+  width = 6.5,                     # Adjust width to accommodate all elements
+  height =7.5                      # Adjust height to maintain aspect ratio
+)
+```
+

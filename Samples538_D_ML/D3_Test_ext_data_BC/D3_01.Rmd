@@ -1,0 +1,420 @@
+---
+title: "sPLSDA batch correction with mice imputation"
+output: html_document
+date: "2024-12-16"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+```{r}
+rm(list = ls())
+```
+
+```{r}
+output_dir = here("Samples538_D_ML/D3_Test_ext_data_BC/sPLSDA_Datasets")
+```
+
+# libraries General
+
+```{r}
+library(here)
+library(tidyverse)
+library(phyloseq)
+library(cowplot)
+library(ggplotify)
+```
+
+```{r}
+# library(PCAtools) # for the command PCAtools::pca
+library(mixOmics)
+library(phyloseq)
+library(microbiome)
+library(PLSDAbatch)
+library(vegan) #varpart
+
+```
+
+### Load Sample538 Maaslin 16S
+```{r}
+Samples538_Maaslin2_clr <- 
+  read.table(here("Samples538_A_Geno_Microbiome/A2_Maaslin/Maaslin2_16S_Species_output/features",
+                  "filtered_data_norm.tsv"),
+                      header = T)
+Samples538_Maaslin2_clr
+
+Samples538_Maaslin2_clr = Samples538_Maaslin2_clr %>%
+  rename(IID = feature) 
+Samples538_Maaslin2_clr
+```
+
+
+## Load Sample538 metadata file
+```{r}
+Samples538_covariates <- 
+  read.table(here("Samples538_A_Geno_Microbiome/A1_Plink/A1_00_Plink_files",
+                           "Samples538_Combined_covariates_PCA.txt"),
+                      header = T)
+Samples538_covariates %>% head()
+
+Samples538_covariates = Samples538_covariates %>% 
+  dplyr::select(IID, ECC_status) %>% 
+  rename(IID = IID) %>% 
+  mutate(Study_name = "Khan_2024")
+Samples538_covariates
+```
+
+## combine Sample538 Maaslin 16S and metadata
+```{r}
+Samples538_meta_Maaslin2_clr <- Samples538_covariates %>% 
+  left_join(Samples538_Maaslin2_clr, by = "IID") %>% 
+  # column_to_rownames(var = "IID") %>% 
+  # factor the column ECC_status
+  mutate(ECC_status = as.factor(ECC_status))
+Samples538_meta_Maaslin2_clr
+```
+
+
+## Load external dataset
+```{r}
+# Define dataset names
+dataset_names <- c("Agnello_2017", "Gomez_2017", "Kalpana_2020", "Teng_2015")  # External datasets
+
+# Set the folder for the external datasets
+dataset_folder <- here("Samples538_D_ML/D2_ML_ext_data/Datasets")  # Folder where the external dataset is stored
+
+# Initialize empty lists to store the imported datasets
+imported_datasets <- list()
+
+
+# Loop through the dataset names
+for (dataset_name in dataset_names) {
+  
+  ## Step 1: Import the primary dataset (.rds)
+  dataset_path <- here(dataset_folder, paste0(dataset_name, "_MaAsLin2_CLR_ECCstatus.rds"))  
+  dataset <- readRDS(dataset_path)
+  
+  # Add a new column with the study name
+  dataset$Study_name <- dataset_name
+  
+  # Append the dataset to the list
+  imported_datasets[[dataset_name]] <- dataset
+  
+}
+
+# Combine all primary datasets
+combined_ext_dataset_meta <- do.call(bind_rows, imported_datasets) %>% 
+  relocate(Study_name, .after = ECC_status) %>%  # Move 'Study_name'
+  rename(IID = sampleid) %>%  # Rename 'feature' to 'IID'
+  identity()  # Ensure the dataset is a tibble
+combined_ext_dataset_meta 
+```
+
+
+## imputation either mice pmm or 0
+
+```{r, echo=TRUE, include=FALSE}
+Pooled_Pl_Species_metadata <- bind_rows(Samples538_meta_Maaslin2_clr, combined_ext_dataset_meta) 
+
+Pooled_Pl_Species_imp <- Pooled_Pl_Species_metadata %>%
+  column_to_rownames(var = "IID") %>%  # Set the row names to the 'IID' column
+  dplyr::select(-ECC_status, -Study_name) %>%  # Remove the 'Study_name' column
+  as.data.frame() %>%                     # Ensure compatibility with mice
+  # do either this
+  mutate(across(everything(), ~ replace_na(.x, 0))) %>% # Replace NAs with 0
+  # or this
+  # mice::mice(method = "rf", m = 1, printFlag = TRUE) %>% mice::complete() %>%  # Apply PMM imputation
+  rownames_to_column(var = "IID") %>%     # Re-add the row names as a column
+  as_tibble()                             # Convert back to tibble for dplyr consistency
+
+
+# Check the result
+Pooled_Pl_Species_imp
+# takes about 3 hours
+
+# combine imputed data with metadata
+Pooled_Pl_Species_imp_meta <- Pooled_Pl_Species_metadata[,c("IID", "ECC_status","Study_name")] %>% 
+  inner_join(Pooled_Pl_Species_imp, by = "IID") %>% 
+  identity()  # Ensure the dataset is a tibble
+Pooled_Pl_Species_imp_meta %>% print()
+
+
+# Save the object as .rds
+saveRDS(Pooled_Pl_Species_imp_meta, file = here(output_dir,
+                                "D3_01_Pooled_Pl_Species_imp_meta.rds"
+                                )
+        )
+```
+
+#Load
+
+```{r}
+# Load the object from .rds and assign it to a variable
+Pooled_Pl_Species_imp_meta <- readRDS(file = here(output_dir,
+                                "D3_01_Pooled_Pl_Species_imp_meta.rds")
+)
+
+# Verify the object
+Pooled_Pl_Species_imp_meta
+```
+
+## Get the data for sPLSDA
+```{r}
+Pooled_Disease_status = as.factor(Pooled_Pl_Species_imp_meta$ECC_status)
+Pooled_Disease_status
+Pooled_Study_name = as.factor(Pooled_Pl_Species_imp_meta$Study_name)
+Pooled_Study_name
+
+Pooled_Pl_Species_RA_clr = Pooled_Pl_Species_imp_meta %>% 
+  column_to_rownames(var = "IID") %>%
+  dplyr::select( -ECC_status, -Study_name, )
+Pooled_Pl_Species_RA_clr
+```
+
+
+```{r}
+# # Check for zero-variance columns
+# zero_variance_cols <- apply(Pooled_Pl_Species_RA_clr, 2, var) == 0
+# 
+# # Remove zero-variance columns
+# Pooled_Pl_Species_RA_clr_filtZV <- Pooled_Pl_Species_RA_clr[, !zero_variance_cols]
+```
+
+#  pca option
+
+```{r}
+Pooled_Pl_Species_RA_OTU_mixOmics_pca_clr <- mixOmics::pca(Pooled_Pl_Species_RA_clr, scale = T,
+                                                            center = T,
+                                                            ncomp = 3,
+                                                            )
+```
+
+```{r}
+plot_before_splsda = 
+mixOmics::plotIndiv(Pooled_Pl_Species_RA_OTU_mixOmics_pca_clr,
+                    group=Pooled_Pl_Species_imp_meta$Study_name, 
+                    ind.names = F,
+                    legend=T,
+                    point.lwd = 0.7,
+                    pch = as.numeric(factor(Pooled_Pl_Species_imp_meta$ECC_status))+14,
+                    pch.levels=(Pooled_Pl_Species_imp_meta$ECC_status), ellipse = TRUE, 
+                    title="Before batch correction",legend.title = "Study_name", 
+                    legend.title.pch = "ECC_status",
+                    size.legend = rel(2.4),
+                    size.legend.title = rel(1.0),
+                    size.title = rel(1.2)
+                    )
+```
+```{r}
+plot_before_splsda_gg = plot_before_splsda$graph +theme(legend.position="none")
+```
+
+
+# check if the row names in metadata and OTU files are the same
+
+```{r}
+identical(row.names(Pooled_Pl_Species_imp_meta), row.names(Pooled_Pl_Species_RA_clr))
+```
+
+<!-- # Set batches and disease_status -->
+
+<!-- ```{r} -->
+<!-- Pooled_Disease_status = as.factor(Pooled_Pl_Species_imp_meta$Disease_status) -->
+<!-- Pooled_Disease_status -->
+<!-- Pooled_Study_name = as.factor(Pooled_Pl_Species_imp_meta$Study_name) -->
+<!-- Pooled_Study_name -->
+<!-- ``` -->
+
+
+# The optimal number of components
+
+```{r}
+Pooled_Pl_Species_RA_clr_Disease_status.tune <- mixOmics::plsda(X = Pooled_Pl_Species_RA_clr, Y = Pooled_Disease_status, ncomp = 5)
+Pooled_Pl_Species_RA_clr_Disease_status.tune$prop_expl_var #1
+```
+
+```{r}
+Pooled_Pl_Species_RA_clr_Study_name.tune <- PLSDA_batch(X = Pooled_Pl_Species_RA_clr, 
+                             Y.trt = Pooled_Disease_status, Y.bat = Pooled_Study_name,
+                             ncomp.trt = 1, ncomp.bat = 10)
+Pooled_Pl_Species_RA_clr_Study_name.tune$explained_variance.bat  #3 # the sum to top 2 Y values give a variance of 1 #see the next code 
+```
+
+```{r}
+sum(Pooled_Pl_Species_RA_clr_Study_name.tune$explained_variance.bat$Y[1:4])
+```
+
+# To correct the Pooled_Pl_Species_RA_clr\_ data with PLSDA-batch
+
+```{r}
+Pooled_Pl_Species_RA_clr_plsda_batch.correct <- PLSDA_batch(X = Pooled_Pl_Species_RA_clr, 
+                                      Y.trt = Pooled_Disease_status, Y.bat = Pooled_Study_name, 
+                                      ncomp.trt = 1, ncomp.bat = 4)
+Pooled_Pl_Species_RA_clr_plsda_batch <- Pooled_Pl_Species_RA_clr_plsda_batch.correct$X.nobatch
+Pooled_Pl_Species_RA_clr_plsda_batch %>% as.data.frame()
+```
+
+```{r}
+```
+
+# sPLSDA-batch The optimal number of variables to select per component
+
+```{r}
+set.seed(789)
+Pooled_Pl_Species_RA_clr_test.keepX = c(seq(1, 10, 1), seq(20, ncol(Pooled_Pl_Species_RA_clr), 10)) #number of OTUs
+Pooled_Pl_Species_RA_clr_test.keepX
+Pooled_Pl_Species_RA_clr_Disease_status.tune.v <- tune.splsda(X = Pooled_Pl_Species_RA_clr, Y = Pooled_Disease_status, 
+                             ncomp = 1, test.keepX = Pooled_Pl_Species_RA_clr_test.keepX, 
+                             validation = 'Mfold', folds = 4, nrepeat = 50)
+Pooled_Pl_Species_splsda_choice_keepX = Pooled_Pl_Species_RA_clr_Disease_status.tune.v$choice.keepX 
+Pooled_Pl_Species_splsda_choice_keepX
+```
+
+```{r}
+Pooled_Pl_Species_RA_clr_splsda.correct <- PLSDA_batch(X = Pooled_Pl_Species_RA_clr, 
+                                       Y.trt = Pooled_Disease_status, Y.bat = Pooled_Study_name, 
+                                       ncomp.trt = 1, keepX.trt = Pooled_Pl_Species_splsda_choice_keepX, 
+                                       ncomp.bat = 4)
+Pooled_Pl_Species_RA_clr_splsda <- Pooled_Pl_Species_RA_clr_splsda.correct$X.nobatch
+Pooled_Pl_Species_RA_clr_splsda %>%  as.data.frame()
+```
+# Save the sPLSDA batch corrected table
+```{r}
+# save(Pooled_Pl_Species_RA_clr_splsda, file = paste0(out_dir, "/Pooled_Pl_Species_RA_clr_splsda.RData"))
+```
+
+
+#  pca option
+
+```{r}
+
+Pooled_Pl_Species_RA_clr_splsda_pca <- mixOmics::pca(Pooled_Pl_Species_RA_clr_splsda, scale = T,
+                                                            center = T,
+                                                            ncomp = 3,
+                                                            )
+Pooled_Pl_Species_RA_clr_splsda_pca
+```
+
+```{r}
+plot_after_splsda = 
+mixOmics::plotIndiv(Pooled_Pl_Species_RA_clr_splsda_pca,
+                    group=Pooled_Pl_Species_imp_meta$Study_name, 
+                    ind.names = F,
+                    legend=T,
+                    point.lwd = 0.7,
+                    pch = as.numeric(factor(Pooled_Pl_Species_imp_meta$ECC_status))+14,
+                    pch.levels=(Pooled_Pl_Species_imp_meta$ECC_status), ellipse = TRUE, 
+                    title="After batch correction",legend.title = "Study_name", 
+                    legend.title.pch = "ECC_status",
+                    size.legend = rel(2.4),
+                    size.legend.title = rel(1.0),
+                    size.title = rel(1.2)
+                    )
+```
+
+
+```{r}
+
+
+```
+
+
+```{r}
+plot_after_splsda_gg = plot_after_splsda$graph +theme(legend.position="none")
+```
+
+```{r}
+legend = get_legend( plot_after_splsda$graph  + theme(legend.position="top"))
+
+# add legend
+p <- plot_grid(
+  legend,
+  plot_grid(plot_before_splsda_gg, plot_after_splsda_gg, ncol = 2),
+  ncol = 1,
+  rel_heights = c(0.15, 1) # Adjust these values to change the relative heights of the legend and plots
+)
+p
+ggsave(here("Samples538_D_ML/D3_Test_ext_data_BC",
+            "D3_01_before_after_splsda_gg.jpg"),
+       dpi = 300,
+       height = 5,
+       width = 10)
+```
+
+```{r}
+Pooled_Pl_Species_RA_clr_splsda_2 =
+  Pooled_Pl_Species_RA_clr_splsda %>%
+  as.data.frame() %>% 
+  rownames_to_column("IID")
+Pooled_Pl_Species_RA_clr_splsda_2
+```
+## Separate the individual tables for each external study
+## merge the meta-data inclucing study name and disease status
+
+```{r}
+Pooled_Pl_Species_RA_clr_splsda_meta <- inner_join(
+  Pooled_Pl_Species_imp_meta[, c("Study_name", "ECC_status", "IID")], # Ensure "IID" is included here for joining
+  Pooled_Pl_Species_RA_clr_splsda_2,
+  by = "IID" # Correct syntax for column matching
+) %>%
+  rename("sampleid" = "IID")
+
+Pooled_Pl_Species_RA_clr_splsda_meta
+
+```
+
+```{r}
+
+dataset_names <- c("Agnello_2017", "Gomez_2017", "Kalpana_2020", "Khan_2024", "Teng_2015")  # External datasets
+# Iterate through each split
+  for (dataset_name in dataset_names) {
+    # Subset the data
+    subset_data <- Pooled_Pl_Species_RA_clr_splsda_meta %>% 
+      filter(Study_name == dataset_name) %>% 
+      dplyr::select(-Study_name)
+
+    # Define the file path
+    file_path <- here(output_dir,
+                                paste0(dataset_name, "_MaAsLin2_CLR_sPLSDA_ECCstatus.rds")
+                      )
+                           
+
+    # Save the subset as an RDS file
+    saveRDS(subset_data, here(output_dir,
+                                paste0(dataset_name, "_MaAsLin2_CLR_sPLSDA_ECCstatus.rds"))
+            )
+    write.table(subset_data, file = here(output_dir,
+                                paste0(dataset_name, "_MaAsLin2_CLR_sPLSDA_ECCstatus.txt")),
+                sep = "\t", quote = F, row.names = F)
+  }
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

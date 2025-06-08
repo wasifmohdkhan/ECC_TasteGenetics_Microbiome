@@ -1,0 +1,244 @@
+---
+title: "LDM on Samples538 one_variant_one_OTU"
+output: html_document
+date: "2024-09-24"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+```{r}
+rm(list = ls())
+```
+
+# Load libraries
+```{r}
+library(tidyverse)
+library(here)
+library(LDM)
+```
+
+
+## Need three tables
+1. A microbiome table
+
+```{r}
+Plaque538_16S_ITS_Species_CPM_OTU = read.table(here("Samples538_A_Geno_Microbiome/A2_Maaslin/Microbiome538_files",
+                                  "Plaque538_16S_ITS_Species_CPM_OTU.txt"),
+                             header = T) %>% 
+  column_to_rownames(var = "sampleid")
+Plaque538_16S_ITS_Species_CPM_OTU
+
+```
+
+
+
+## microbiome file with only Maaslin2 significant species
+
+```{r}
+Maaslin2_16S_ITS_features = 
+  read.table(here("../RP_230718_Taste_Genes_Analysis_1/Samples538_Analysis/Microbiome538_files",
+                                            "Maaslin2_16S_ITS_DA_normalized_features.txt"),
+                                       header = T)
+Maaslin2_16S_ITS_features %>% head()
+
+Maaslin2_16S_ITS_features_2 = Maaslin2_16S_ITS_features %>%
+  column_to_rownames(var = "IID") %>%
+  dplyr::select(-FID) %>% 
+  as.matrix() 
+Maaslin2_16S_ITS_features_2 %>% head()
+
+Maaslin2_16S_ITS_features_names = Maaslin2_16S_ITS_features_2 %>%
+  colnames()
+Maaslin2_16S_ITS_features_names
+
+```
+
+
+```{r}
+Plaque538_16S_ITS_Species_CPM_OTU_sig = Plaque538_16S_ITS_Species_CPM_OTU %>% 
+  dplyr::select(one_of(Maaslin2_16S_ITS_features_names))
+Plaque538_16S_ITS_Species_CPM_OTU_sig
+```
+
+
+## Load the variant file
+```{r}
+Samples538_Plink_logit_covASPB_w_anno = read.table(here("Samples538_A_Geno_Microbiome/A1_Plink",
+                                                               "A1_01_Samples538_Plink_logit_covASPB_w_anno.txt"),
+                                                          header = T)
+Samples538_Plink_logit_covASPB_w_anno %>% head()
+
+Samples538_Plink_logit_covASPB_w_anno_2 = Samples538_Plink_logit_covASPB_w_anno %>% 
+  filter(P_Bonferroni < 0.05) %>%
+  filter(A1 != '*') %>%
+  mutate(SNP_A1 = paste(SNP, A1, sep = "_"))
+Samples538_Plink_logit_covASPB_w_anno_2 
+
+```
+
+## A SNP data table
+
+```{r}
+Samples538_55gene_Plink_vcf_raw = read.table(here("Samples538_A_Geno_Microbiome/A1_Plink/A1_Plink_files",
+                           "Samples538_55gene_Plink.vcf.raw"),
+                      header = T)
+Samples538_55gene_Plink_vcf_raw %>% head()
+
+Samples538_55gene_Plink_vcf_raw = Samples538_55gene_Plink_vcf_raw %>%
+  # column_to_rownames(var = "IID") %>%
+  dplyr::select(-FID, -PAT, -MAT, -SEX, -PHENOTYPE)
+Samples538_55gene_Plink_vcf_raw %>% head()
+```
+
+
+## Select significant SNPs in raw vcf file
+
+```{r} 
+Samples538_55gene_Plink_vcf_raw_2 = Samples538_55gene_Plink_vcf_raw %>%
+  dplyr::select(IID, one_of(Samples538_Plink_logit_covASPB_w_anno_2$SNP_A1), )
+Samples538_55gene_Plink_vcf_raw_2
+
+Samples538_55gene_Plink_vcf_raw_2_variants = Samples538_55gene_Plink_vcf_raw_2 %>% 
+  select(-IID) %>%
+  names()
+Samples538_55gene_Plink_vcf_raw_2_variants
+```
+
+## Load the metadata file
+```{r}
+Samples538_covariates = read.table(here("Samples538_A_Geno_Microbiome/A1_Plink/A1_Plink_files",
+                           "Samples538_Combined_covariates_PCA.txt"),
+                      header = T)
+Samples538_covariates %>% head()
+
+Samples538_covariates_2 = Samples538_covariates %>%
+  mutate(Batch = case_when(
+    Batch_2 == 0 & Batch_3 == 0 ~ 1,  # If Batch_2 = 0 and Batch_3 = 0, assign Batch = 1
+    Batch_2 == 1 & Batch_3 == 0 ~ 2,  # If Batch_2 = 1 and Batch_3 = 0, assign Batch = 2
+    Batch_2 == 0 & Batch_3 == 1 ~ 3   # If Batch_2 = 0 and Batch_3 = 1, assign Batch = 3
+  )) %>% 
+  mutate(Batch = as.factor(Batch)) %>%
+  mutate(ECC_status = case_when(
+    ECC_status == 0 ~ "CF",
+    ECC_status == 1 ~ "ECC"
+  )) %>% 
+  mutate(ECC_status = as.factor(ECC_status)) %>%
+  mutate(Sex =  case_when(
+    Sex == 1 ~ "One",
+    Sex == 2 ~ "Two"
+  )) %>% 
+  mutate(Sex = as.factor(Sex))
+Samples538_covariates_2
+```
+
+
+# Merge the metadata file with the SNP data table
+
+```{r}
+## join the datasets
+
+Samples538_covariates_vcf_raw = inner_join(Samples538_covariates_2,
+                                           Samples538_55gene_Plink_vcf_raw_2,
+                                           by = "IID") %>% 
+  column_to_rownames(var = "IID") %>% 
+  dplyr::select(-FID)
+Samples538_covariates_vcf_raw 
+```
+
+## apply LDM
+
+```{r}
+
+# Samples538_res.ldm.med <- ldm(formula = Plaque538_16S_ITS_Species_CPM_OTU_sig | (Age+Sex+PC1+PC2+PC3+PC4+PC5+Batch) ~ 
+#                                 chr07_143443837_TAS2R60_rs35195910_G+ECC_status,
+#                    data=Samples538_covariates_vcf_raw,
+#                    seed=67817,
+#                    n.cores=40,
+#                    test.mediation=TRUE,
+#                    # scale.otu.table = F,
+#                    # center.otu.table = F,
+#                    # freq.scale.only = T
+#                    ) 
+# Samples538_res.ldm.med
+
+# ##Result
+# 
+# Samples538_res.ldm.med$med.p.global.omni
+# 
+# Samples538_res.ldm.med$med.detected.otu.omni
+
+```
+
+
+
+```{r}
+# Initialize an empty data frame to store results
+results_df <- data.frame(SNP = character(),
+                         OTU_Detected = character(),
+                         P_Value = numeric(),
+                         stringsAsFactors = FALSE)
+
+# Loop over each SNP
+for (snp in Samples538_55gene_Plink_vcf_raw_2_variants) {
+  
+  # Loop over each column of the Plaque538_16S_ITS_Species_CPM_OTU_sig dataframe
+  for (otu_col in colnames(Plaque538_16S_ITS_Species_CPM_OTU_sig)) {
+    
+    # Subset the OTU column for this iteration
+    otu_column_data <- Plaque538_16S_ITS_Species_CPM_OTU %>%
+      select(otu_col)
+    
+    # Dynamically construct the formula using subsetting of the specific OTU column
+   formula_str <- paste0("otu_column_data | (Age+Sex+PC1+PC2+PC3+PC4+PC5+Batch) ~ ", 
+                        snp, " + ECC_status")
+    
+    # Convert the string to a formula
+    formula <- as.formula(formula_str)
+
+    # Run the ldm model with the dynamically generated formula
+    res <- ldm(formula = formula,
+               data = Samples538_covariates_vcf_raw,
+               seed = 67817,
+               n.cores = 40,
+               test.mediation = TRUE)
+    
+    # Check if the results are not NULL
+    if (!is.null(res$med.detected.otu.omni) && !is.null(res$med.p.global.omni)) {
+      # Extract the required outputs
+      otu_detected <- res$med.detected.otu.omni
+      p_value <- res$med.p.global.omni
+      
+      # If multiple OTUs are detected, repeat the p_value for each OTU
+      result_df <- data.frame(SNP = rep(snp, length(otu_detected)), 
+                              OTU_Detected = otu_detected, 
+                              P_Value = rep(p_value, length(otu_detected)),
+                              stringsAsFactors = FALSE)
+      
+      # Append the result to the main results data frame
+      results_df <- rbind(results_df, result_df)
+    } else {
+      message(paste("Skipping SNP", snp, "and OTU column", otu_col, "due to NULL results."))
+    }
+  }
+}
+
+# View the final results
+print(results_df)
+
+
+# Error in colSums(1/med.T.otu.freq.null) : 
+#   'x' must be an array of at least two dimensions
+
+## it means that ldm would not work on single column data
+## so we can not use it for single otu and single snp at a time
+
+```
+
+```{r}
+
+```
+
+

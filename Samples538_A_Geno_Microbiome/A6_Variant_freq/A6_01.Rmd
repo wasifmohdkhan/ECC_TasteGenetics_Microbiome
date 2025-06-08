@@ -1,0 +1,103 @@
+---
+title: "Untitled"
+output: html_document
+date: "2025-03-03"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+```{r}
+rm(list=ls())
+```
+
+# Libraries
+```{r}
+library(tidyverse)
+library(ggplot2)
+library(here)
+```
+
+## Gnomad data parsed using AI chat
+```{r}
+# Load necessary libraries
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+# Create a dataframe
+allele_data <- data.frame(
+  Genetic_Ancestry_Group = c("Amish", "Ashkenazi Jewish", "East Asian", "European (Finnish)", 
+                             "European (non-Finnish)", "Middle Eastern", "Remaining", 
+                             "Admixed American", "South Asian", "African/African American",
+                             "XX_Females", "XY_Males", "Our_CF_samples", "Our_ECC_samples"),
+  `SCNN1D_rs111819661` = c(0.004386, 0.01391, 0.01363, 0.01442, 0.01382, 0.01446, 0.01372, 
+              0.02215, 0.009405, 0.005936, 0.01367, 0.01338, 0.020, 0.175),
+  `TAS2R60_rs35195910` = c(0.09890, 0.08840, 0.08476, 0.05689, 0.04605, 0.04850, 0.04888, 
+              0.02765, 0.01968, 0.008638, 0.04538, 0.04461, 0.179, 0.397),
+  `PLCB2_rs2305645`  = c(0.4593, 0.3042, 0.09406, 0.2784, 0.3288, 0.2688, 0.2953, 
+              0.2077, 0.2002, 0.2861, 0.3070, 0.3020, 0.295, 0.151)
+)
+allele_data
+```
+
+
+```{r}
+
+# Convert the data from wide to long format
+allele_long <- allele_data %>%
+  pivot_longer(cols = -Genetic_Ancestry_Group,  # Pivot all columns except 'Genetic Ancestry Group'
+               names_to = "Variant",           # Create a new column 'Variant' for SNP markers
+               values_to = "Allele_Frequency") # Create a new column 'Allele_Frequency' for values
+
+# Convert 'Genetic Ancestry Group' into a factor to preserve order
+allele_long$Genetic_Ancestry_Group <- factor(allele_long$Genetic_Ancestry_Group, 
+                                             levels = allele_data$Genetic_Ancestry_Group)
+
+# View the transformed data
+print(allele_long)
+
+```
+
+
+```{r}
+# Plot the allele frequencies
+Allele_Frequency_plot = 
+ggplot(allele_long, aes(x = Genetic_Ancestry_Group, y = Allele_Frequency, color = Variant, group = Variant)) +
+  geom_line(size = 1, alpha = 0.4) + 
+  geom_point(size = 2, alpha = 0.8) + 
+  # Add horizontal for population average lines
+  geom_hline(yintercept = 0.01353, color = "darkblue", linetype = "dashed", size = 0.7) +
+  geom_hline(yintercept = 0.04500, color = "darkred", linetype = "dashed", size = 0.7) +
+  geom_hline(yintercept = 0.3045, color = "darkgreen", linetype = "dashed", size = 0.7) +
+  labs(
+    # title = "Allele Frequency Comparison Across Three Tables",
+       x = "Genetic Ancestry Group (GnomAD Data)", 
+       y = "Allele Frequency") +
+  scale_color_manual(values = c(`SCNN1D_rs111819661` = "darkblue",
+                                `TAS2R60_rs35195910`= "darkred",
+                                `PLCB2_rs2305645` = "darkgreen")) +
+  theme_bw(base_family = "Arial") +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 6, color = "black" ),
+    axis.text.y = element_text(size = 6, color = "black"),
+    axis.title = element_text(size = 7, color = "black", face = "bold"),
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    panel.grid.major = element_line(size = 0.25),  # Reduce major grid size
+    panel.grid.minor = element_line(size = 0.15),  # Reduce minor grid size
+    # legend.position = "left",
+    legend.key.size = unit(0.25, "cm"),
+    legend.text = element_text(size = 4, color = "black"),
+    legend.title = element_text(size = 6, color = "black")
+  ) #+
+
+ggsave("allele_frequency_plot.jpg",
+       Allele_Frequency_plot,
+       width = 5, height = 3, dpi = 300)
+
+
+```
+

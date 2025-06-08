@@ -1,0 +1,547 @@
+---
+title: "LDM on Samples538 sig_variant_sig_OTU with clr"
+output: html_document
+date: "2024-09-24"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+```{r}
+rm(list = ls())
+```
+
+```{r}
+file_name_ext="C1_03_sig_variant_sig_OTU"
+```
+
+# Load libraries
+```{r}
+library(tidyverse)
+library(here)
+library(LDM)
+library(ComplexHeatmap)
+library(circlize)
+library(grid)
+```
+
+
+## Need three tables
+1. A microbiome table
+
+16S microbiome
+#### For microbiome data use Maaslin features for consistency in naming
+```{r}
+# Import the Maaslin features
+Plaque538_16S_Species_CLR = readr::read_tsv(here("Samples538_A_Geno_Microbiome/A2_Maaslin/Maaslin2_16S_Species_output/features",
+                                            "filtered_data_norm.tsv"))
+Plaque538_16S_Species_CLR
+```
+ITS microbiome
+```{r}
+# Import the Maaslin features
+Plaque538_ITS_Species_CLR = readr::read_tsv(here("Samples538_A_Geno_Microbiome/A2_Maaslin/Maaslin2_ITS_Species_output/features",
+                                            "filtered_data_norm.tsv"))
+Plaque538_ITS_Species_CLR
+
+```
+
+
+```{r}
+
+Plaque538_16S_ITS_Species_CLR_OTU = full_join(Plaque538_16S_Species_CLR, Plaque538_ITS_Species_CLR, by = "feature") %>%
+  rename(IID = feature)
+Plaque538_16S_ITS_Species_CLR_OTU %>% head()
+
+# Plaque538_16S_ITS_Species_CLR_OTU_2 = Plaque538_16S_ITS_Species_CLR_OTU %>%
+#   # column_to_rownames(var = "IID") %>%
+#   # dplyr::select(-FID) %>% 
+#   identity()
+# Plaque538_16S_ITS_Species_CLR_OTU_2 
+
+Plaque538_16S_ITS_Species_CLR_OTU_names = Plaque538_16S_ITS_Species_CLR_OTU %>% 
+  dplyr::select(-IID) %>%
+  colnames()
+Plaque538_16S_ITS_Species_CLR_OTU_names
+```
+
+
+
+## microbiome file with only Maaslin2 significant species
+
+```{r}
+Maaslin2_16S_ITS_features =
+  readRDS(here("Samples538_A_Geno_Microbiome/A2_Maaslin",
+               "A2_04_Species_coef_qval_16S_ITS.rds"))
+Maaslin2_16S_ITS_features
+
+# Maaslin2_16S_ITS_features_2 = Maaslin2_16S_ITS_features %>%
+#   # column_to_rownames(var = "IID") %>%
+#   dplyr::select(-FID) %>%
+#   # as.matrix() %>%
+#   # filter(IID %in% rownames(Samples538_covariates_vcf_raw)) %>%
+#   column_to_rownames(var = "IID") %>%
+#   identity()
+# Maaslin2_16S_ITS_features_2 %>% head()
+
+Maaslin2_16S_ITS_features_names = Maaslin2_16S_ITS_features %>%
+  filter(q_values < 0.01) %>%
+  pull(OTUs)
+Maaslin2_16S_ITS_features_names
+
+```
+
+
+
+
+```{r}
+# Plaque538_16S_ITS_Species_CLR_OTU_sig = Plaque538_16S_ITS_Species_CLR_OTU_2 %>%
+#   # dplyr::select(one_of(Maaslin2_16S_ITS_features_names)) %>%
+#   identity()
+# Plaque538_16S_ITS_Species_CLR_OTU_sig
+
+# ## feature names
+# Plaque538_16S_ITS_Species_CLR_OTU_sig_names = Plaque538_16S_ITS_Species_CLR_OTU_sig %>%
+#   dplyr::select(-IID) %>%
+#   names()
+# Plaque538_16S_ITS_Species_CLR_OTU_sig_names
+
+```
+
+
+
+
+## load recoded vcf file to make a new vcf which as only the above variants
+```{r}
+Samples538_recoded_vcf <- 
+  read.table(here("Samples538_A_Geno_Microbiome/A1_Plink/A1_00_Plink_files",
+                  "Samples538_55gene_Plink.vcf.2.raw"),
+                        header = T)
+Samples538_recoded_vcf[, 1:10]  %>% head()
+
+
+# Create a vector of column names
+columns_to_remove <- c("FID", "PAT", "MAT", "SEX", "PHENOTYPE")
+
+
+Samples538_recoded_vcf_2 = Samples538_recoded_vcf %>%
+  column_to_rownames(var = "IID") %>%
+  dplyr::select(-c(columns_to_remove)) %>%
+  # replace missing values with 0
+  mutate(across(everything(), ~if_else(is.na(.), 0, .)))  %>% 
+  # to make it a dominant vcf table
+  mutate(across(everything(), ~case_when(
+  . == 2 ~ 1,  # Replace 2 with 1
+  TRUE ~ .     # Keep all other values the same
+  ))) %>%
+  # change the variants to factor
+  mutate(across(everything(), as.factor)) %>%
+  ## IID column is required for merging
+  # rownames_to_column(var = "IID") %>% 
+  identity()
+
+Samples538_recoded_vcf_2 %>% head()
+```
+## Load the variant file
+```{r}
+Samples538_Plink_logit_covASPB_w_anno <- 
+  read.table(here("Samples538_A_Geno_Microbiome/A1_Plink/A1_02_Plink_dominant",
+                  "A1_02_Samples538_55gene_logistic_dominant_cov_anno.txt"),
+                                                          header = T)
+Samples538_Plink_logit_covASPB_w_anno %>% head()
+
+Samples538_Plink_logit_covASPB_w_anno_2 = Samples538_Plink_logit_covASPB_w_anno %>% 
+  arrange(P_BH) %>%                 # Sort by P_BH in ascending order
+  slice_head(prop = 0.05) %>%          # Select the top 1% of rows
+  filter(P_BH < 0.05) %>%
+  filter(A1 != '*') %>%
+  # mutate(SNP_A1 = paste(SNP, A1, sep = "_")) %>% 
+  identity()
+Samples538_Plink_logit_covASPB_w_anno_2 
+
+Samples538_Plink_logit_covASPB_w_anno_2_sig = Samples538_Plink_logit_covASPB_w_anno_2 %>%
+  filter(P_BH < 0.05) %>%
+  pull(SNP)
+Samples538_Plink_logit_covASPB_w_anno_2_sig
+```
+
+```{r}
+Samples538_recoded_vcf_sig = Samples538_recoded_vcf_2 %>%
+  dplyr::select(Samples538_Plink_logit_covASPB_w_anno_2$SNP) %>% 
+  rownames_to_column(var = "IID")
+Samples538_recoded_vcf_sig
+
+## variant names
+Samples538_recoded_vcf_sig_names = Samples538_recoded_vcf_sig %>% 
+  dplyr::select(-IID) %>%
+  names()
+Samples538_recoded_vcf_sig_names 
+```
+
+
+
+##covariate
+
+## Load the metadata file
+```{r}
+Samples538_covariates <- 
+  read.table(here("Samples538_A_Geno_Microbiome/A1_Plink/A1_00_Plink_files",
+                           "Samples538_Combined_covariates_PCA.txt"),
+                      header = T)
+Samples538_covariates %>% head()
+
+
+```
+
+
+```{r}
+Samples538_covariates %>% group_by(Sex) %>% summarise(n = n())
+Samples538_covariates %>% group_by(ECC_status) %>% summarise(n = n())
+```
+
+Required by plink Binary ('0' = control, '1' = case)
+Required by plink Sex code ('1' = male, '2' = female, '0' = unknown)
+FID (Family ID) and IID (Individual ID) for it to correctly identify individuals
+mbQTL can not take non numerical covariates
+
+```{r}
+
+covariates <- c("Sex", "Age", "RuralUrban", "SEFI_score", "PC1", "PC2", "PC3", "PC4", "PC5")
+
+Samples538_covariates_2 = Samples538_covariates %>% 
+  dplyr::select(IID, ECC_status, Sex, Age, RuralUrban, SEFI_score, PC1, PC2, PC3, PC4, PC5) %>%
+  # mutate(FID = IID) %>%
+  mutate(Sex = case_when( # AS Original in data 1, Female | 2, Male 
+    Sex == 0 ~ "Female",
+    Sex == 1 ~ "Male")) %>% 
+  mutate(Sex = case_when( # AS 	required by plink Sex code ('1' = male, '2' = female, '0' = unknown)
+    Sex == "Female" ~ 2,
+    Sex == "Male" ~ 1,
+    TRUE ~ 0 )) %>% 
+  dplyr::select(IID, ECC_status, covariates) %>%
+  mutate(across(c(ECC_status, Sex, RuralUrban), as.factor)) %>% 
+  # column_to_rownames(var = "IID") %>% 
+  identity()
+
+Samples538_covariates_2 
+
+
+# Samples538_covariates_2_t = Samples538_covariates_2 %>%
+#   as.matrix() %>% 
+#   t() %>% 
+#   as.data.frame()
+# Samples538_covariates_2_t 
+```
+
+
+
+
+
+
+
+
+
+
+# combine all the datasets
+
+
+```{r}
+# Combine datasets by joining on "IID" and applying transformations in a streamlined manner
+Samples538_covariates_vcf_clr_microbiome <- Samples538_covariates_2 %>%
+  inner_join(Samples538_recoded_vcf_sig, by = "IID") %>%
+  inner_join(Plaque538_16S_ITS_Species_CLR_OTU, by = "IID") %>%
+  # Remove rows with NA values
+  na.omit() %>%
+  identity()
+
+Samples538_covariates_vcf_clr_microbiome
+```
+
+## Separate microbiome data 
+```{r}
+OTUs_16S_ITS_2 = Samples538_covariates_vcf_clr_microbiome %>% 
+  as.tibble() %>% # to remove the numbered rows
+  column_to_rownames(var = "IID") %>%
+  dplyr::select(all_of(Maaslin2_16S_ITS_features_names)) 
+OTUs_16S_ITS_2
+```
+
+
+## Separate Variants and covariates
+```{r}
+Samples538_covariates_vcf_raw = Samples538_covariates_vcf_clr_microbiome %>%
+  as.tibble() %>% # to remove the numbered rows
+  column_to_rownames(var = "IID") %>%
+  dplyr::select(all_of(Samples538_recoded_vcf_sig_names),
+                all_of(covariates),
+                ECC_status) %>%
+  identity()
+Samples538_covariates_vcf_raw
+```
+
+
+
+
+## apply LDM
+
+```{r}
+# snp = Samples538_recoded_vcf_sig_names[3]
+# formula_str <- paste0("OTUs_16S_ITS_2 | (Age+Sex+PC1+PC2+PC3+PC4+PC5+RuralUrban+SEFI_score) ~ ",
+#                         snp, " + ECC_status")
+# formula <- as.formula(formula_str)
+# Samples538_res.ldm.med <- ldm(formula = formula,
+#                    data=Samples538_covariates_vcf_raw,
+#                    seed=67817,
+#                    n.cores=40,
+#                    test.mediation=TRUE,
+#                     scale.otu.table = F,
+#                    # center.otu.table = F,
+#                    freq.scale.only = T,
+#                    comp.anal = T,
+#                    dist.method = "euclidean",
+#                    )
+```
+
+# outputs
+
+```{r}
+# Samples538_res.ldm.med
+```
+
+
+```{r}
+##Result
+
+# Samples538_res.ldm.med$med.p.global.freq
+```
+
+
+```{r}
+# Samples538_res.ldm.med$med.detected.otu.freq
+
+```
+```{r}
+# Samples538_res.ldm.med$med.p.global.freq.OR
+```
+
+
+
+```{r}
+# Initialize an empty data frame to store results
+results_df <- data.frame(SNP = character(),
+                         OTU_Detected = character(),
+                         P_Value = numeric(),
+                         stringsAsFactors = FALSE)
+
+# Loop over each SNP and run the model
+for (snp in Samples538_recoded_vcf_sig_names) {
+
+  # Dynamically construct the formula as a string
+  formula_str <- paste0("OTUs_16S_ITS_2 | (Age+Sex+PC1+PC2+PC3+PC4+PC5+RuralUrban+SEFI_score) ~ ",
+                        snp, " + ECC_status")
+
+  # Convert the string to a formula
+  formula <- as.formula(formula_str)
+
+  # Run the ldm model with the dynamically generated formula
+  res <- ldm(formula = formula,
+             data = Samples538_covariates_vcf_raw,
+             seed=67817,
+                   n.cores=40,
+                   test.mediation=TRUE,
+                    scale.otu.table = F,
+                   # center.otu.table = F,
+                   freq.scale.only = T,
+                   comp.anal = T,
+             dist.method = "euclidean",
+             )
+
+  # Check if the results are not NULL
+  if (!is.null(res$med.detected.otu.freq) && !is.null(res$med.p.global.freq)) {
+    # Extract the required outputs
+    otu_detected <- res$med.detected.otu.freq
+    p_value <- res$med.p.global.freq
+
+    # If multiple OTUs are detected, repeat the p_value for each OTU
+    result_df <- data.frame(SNP = rep(snp, length(otu_detected)),
+                            OTU_Detected = otu_detected,
+                            P_Value = rep(p_value, length(otu_detected)),
+                            stringsAsFactors = FALSE)
+
+    # Append the result to the main results data frame
+    results_df <- rbind(results_df, result_df)
+  } else {
+    message(paste("Skipping SNP", snp, "due to NULL results."))
+  }
+}
+
+# View the final results
+print(results_df)
+
+
+```
+
+
+# Save the results to a file
+```{r}
+
+write.table(results_df,
+          file = here("Samples538_C_Mediation/C1_LDM",
+                      paste0(file_name_ext, ".csv")),
+          row.names = FALSE, sep = "\t", quote = FALSE)
+
+```
+
+
+
+
+# Load the results
+```{r}
+Samples538_ldm_one_variant_all_OTU <- read.table(here("Samples538_C_Mediation/C1_LDM",
+                      paste0(file_name_ext, ".csv")),
+                         header = TRUE, sep = "\t")
+Samples538_ldm_one_variant_all_OTU
+```
+
+```{r}
+# # Create a matrix for heatmap (-log10 of p-values)
+# Samples538_ldm_one_variant_all_OTU_matrix <- Samples538_ldm_one_variant_all_OTU %>%
+#   mutate(log_P_Value = -log10(P_Value)) %>%
+#   dplyr::select(-P_Value) %>%
+#   pivot_wider(names_from = OTU_Detected, values_from = log_P_Value) %>%
+#   column_to_rownames(var = "SNP") %>%
+#   as.matrix() %>% 
+#   ## replace na values with 1
+#   replace(is.na(.), 1) %>% 
+#   t()
+# Samples538_ldm_one_variant_all_OTU_matrix
+```
+
+
+
+
+
+```{r}
+# # Open a PNG device to save the plot
+# png(here("Samples538_C_Mediation/C1_LDM",
+#                       paste0(file_name_ext, ".jpg")),
+#     width = 3000, height = 2000, res = 300)
+# 
+# # Create a color scale from white to dark red
+# col_fun <- colorRamp2(c(0,
+#   # min(Samples538_ldm_one_variant_all_OTU_matrix), 
+#                         max(Samples538_ldm_one_variant_all_OTU_matrix)), 
+#                       c("white", "darkred"))
+# 
+# 
+# ht <- ComplexHeatmap::Heatmap(Samples538_ldm_one_variant_all_OTU_matrix,
+#                          name = "-log10(P-value)",
+#                          column_title = "Variants",
+#                          row_title = "Microbial Species",
+#                          # heatmap_legend_param = list(
+#                          #   title = "log2OR",
+#                          #   legend_direction = "vertical",
+#                          #   legend_width = unit(40, "cm"),
+#                          #   title_position = "topcenter"
+#                          # ),
+#                          col = col_fun,  # Apply the color scale here
+#                          column_names_rot = 60,
+#                          column_title_side = "top",
+#                          show_row_names = TRUE,
+#                          show_column_names = TRUE,
+#                          cluster_rows = FALSE,
+#                          cluster_columns = FALSE,
+#                          border = TRUE,
+#                          rect_gp = gpar(col = "black", lwd = 0.5),
+#                          row_names_gp = gpar(fontsize = 12), # Adjust fontsize here
+#                          # cell_fun = function(j, i, x, y, width, height, fill) {
+#                          #   grid.text(heatmap_data_p[i, j], x, y)
+#                          # }
+#                          )
+# 
+# # Adjust the margins to allocate more space for long row names
+# draw(ht,
+#      # heatmap_legend_side = "left",
+#      # annotation_legend_side = "left",
+#      padding = unit(c(15, 40, 2, 25), "mm")) # Add padding on the right for long names
+# 
+# dev.off()
+```
+
+```{r}
+# Convert the adjusted p-values to -log10 scale for better visualization
+Samples538_ldm_one_variant_all_OTU_2 <- Samples538_ldm_one_variant_all_OTU %>%
+  mutate(log_P_Value = -log10(P_Value)) %>%
+  # Convert columns to character to avoid issues with factors
+  mutate(OTU_Detected = as.character(OTU_Detected),
+         SNP = as.character(SNP)) %>%
+  # Add missing SNP rows (if any) for each OTU with NA values
+  bind_rows(
+    expand_grid(
+      OTU_Detected = unique(.$OTU_Detected),
+      SNP = setdiff(Samples538_recoded_vcf_sig_names, unique(.$SNP))
+    ) %>%
+      mutate(P_Value = NA, log_P_Value = NA)
+  ) %>%
+  # Ensure every OTU has all the sig SNPs, filling missing p-values with 0
+  complete( SNP = Samples538_recoded_vcf_sig_names, OTU_Detected,
+           fill = list(P_Value = 0, log_P_Value = 0))
+Samples538_ldm_one_variant_all_OTU_2
+```
+
+
+```{r}
+# Create the heatmap
+heatmap_plot <- ggplot(Samples538_ldm_one_variant_all_OTU_2,
+                       aes(x = SNP, y = OTU_Detected, fill = log_P_Value )) +
+  geom_tile(color = "black", alpha = 0.8) +
+  scale_x_discrete(labels = function(labels) str_replace(labels, "chr\\d+[_]+\\d+_", "")) +
+  scale_y_discrete(labels = function(labels) str_trunc(labels, width = 36, side = "right")) +
+  scale_fill_gradientn(colors = c("white", "red", "darkred"),
+                       name = expression("-log10("*italic(p)*"-value)")
+                       ) +
+  labs(x = "Genetic variants", y = "Microbial species") +
+  theme_bw() +
+   theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),   # Rotate x-axis labels
+    axis.title = element_text(size = 7),                           # Adjust axis title size
+    
+    plot.title = element_text(hjust = 0.5, face = "bold"),          # Center-align the title
+    panel.grid = element_blank(),                                  # Remove panel grid for clean look
+    legend.position = "top",  # Move legend to the bottom
+    # legend.direction = "horizontal",  # Arrange legend items horizontally
+    legend.title = element_text(size = 5),  # Remove legend title for clarity
+    legend.text = element_text(size = 4),  # Adjust legend text size
+    legend.key.size = unit(0.4, "cm"),  # Adjust the size of the legend key symbols
+  ) +
+  theme(
+    axis.text = element_text(size = 6, color = "black"),
+    axis.title = element_text(size = 7, color = "black", face = "bold", margin = margin(r = 10)),
+    legend.text = element_text(size = 6),      # Reduce legend text size
+    legend.title = element_text(size = 7),   # Reduce legend title size
+    legend.key.size = unit(0.4, "cm"),        # Reduce size of legend keys
+    plot.title = element_text(color = "black"),
+    plot.subtitle = element_text(color = "black"),
+    plot.caption = element_text(color = "black"),
+    axis.ticks = element_blank(), # Remove axis ticks
+    # Make the gridlines faint
+    panel.grid.major = element_line(color = "gray", linewidth = 0.05),  # Faint major gridlines
+    panel.grid.minor = element_line(color = "gray", linewidth = 0.02)   # Faint minor gridlines
+  )
+# Display the heatmap
+heatmap_plot
+
+ggsave(here("Samples538_C_Mediation/C1_LDM",
+                      paste0(file_name_ext, ".jpg")),
+       width = 3.8, height = 2.7)
+saveRDS(heatmap_plot, here("Samples538_C_Mediation/C1_LDM",
+                      paste0(file_name_ext, ".rds")))
+
+
+
+```
+
+
+
